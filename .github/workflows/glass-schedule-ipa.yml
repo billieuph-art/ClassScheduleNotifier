@@ -1,0 +1,71 @@
+name: GlassSchedule IPA
+
+on:
+  push:
+    paths:
+      - "GlassSchedule/**"
+      - ".github/workflows/glass-schedule-ipa.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-ipa:
+    runs-on: macos-26
+    defaults:
+      run:
+        working-directory: GlassSchedule
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Generate Xcode project
+        run: |
+          xcodebuild -version
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Build unsigned app
+        run: |
+          xcodebuild -project GlassSchedule.xcodeproj -scheme GlassSchedule \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build > build.log 2>&1 || {
+              echo "===== COMPILER ERRORS ====="
+              grep -E "error:" build.log | sort -u | head -150
+              echo "===== LOG TAIL ====="
+              tail -60 build.log
+              exit 1
+            }
+          grep -E "warning:" build.log | sort -u | head -40 || true
+
+      - name: Package IPA
+        run: |
+          APP=build/Build/Products/Release-iphoneos/GlassSchedule.app
+          ls "$APP" "$APP/PlugIns" "$APP/Watch" || true
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qry GlassSchedule-unsigned.ipa Payload
+          ls -lh GlassSchedule-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GlassSchedule-unsigned-ipa
+          path: GlassSchedule/GlassSchedule-unsigned.ipa
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: glass-schedule-build-${{ github.run_number }}
+          name: 玻璃课表 未签名 IPA（构建 ${{ github.run_number }}）
+          target_commitish: ${{ github.sha }}
+          prerelease: true
+          files: GlassSchedule/GlassSchedule-unsigned.ipa
+          body: |
+            未签名 IPA，用于侧载。请用 Sideloadly / AltStore / 爱思助手 等工具以你自己的 Apple ID 重新签名后安装。
+            需要 iOS 26。
