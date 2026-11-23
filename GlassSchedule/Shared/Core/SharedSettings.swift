@@ -26,7 +26,7 @@ enum SharedSettings {
     static func registerDefaults() {
         defaults.register(defaults: [
             Key.semesterStart: defaultSemesterStart().timeIntervalSinceReferenceDate,
-            Key.reminderMinutes: 30,
+            Key.reminderMinutes: 20,
             Key.autoLiveActivity: true,
             Key.autoClassifyPhotos: true,
             Key.photoToleranceMinutes: 10,
