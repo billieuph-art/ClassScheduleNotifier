@@ -1,42 +1,106 @@
-import Foundation
-#if canImport(WatchConnectivity)
-import WatchConnectivity
-#endif
+import SwiftUI
+import UniformTypeIdentifiers
 
-public final class WatchSyncService: NSObject, ObservableObject {
-    #if canImport(WatchConnectivity)
-    private let session: WCSession?
-    #endif
+struct ContentView: View {
+    @EnvironmentObject private var store: ScheduleStore
+    @EnvironmentObject private var notifications: NotificationScheduler
+    @State private var showingEditor = false
+    @State private var showingImporter = false
+    @State private var importError: String?
 
-    public override init() {
-        #if canImport(WatchConnectivity)
-        self.session = WCSession.default
-        super.init()
-        self.session?.delegate = self
-        self.session?.activate()
-        #else
-        super.init()
-        #endif
+    private var todayCourses: [Course] {
+        let weekday = Calendar.current.component(.weekday, from: Date())
+        let appWeekday = weekday == 1 ? 7 : weekday - 1
+        return store.courses
+            .filter { $0.weekday.rawValue == appWeekday }
+            .sorted { $0.startTime < $1.startTime }
     }
 
-    public func sendNextCourse(_ course: Course) {
-        #if canImport(WatchConnectivity)
-        guard let session, session.isReachable else { return }
-        let payload: [String: Any] = [
-            "courseName": course.name,
-            "location": course.location,
-            "startTime": course.startTime.timeIntervalSince1970,
-            "teacher": course.teacher
-        ]
-        session.sendMessage(payload, replyHandler: nil)
-        #endif
+    var body: some View {
+        NavigationStack {
+            Group {
+                if todayCourses.isEmpty {
+                    ContentUnavailableView(
+                        "今天没有课程",
+                        systemImage: "calendar",
+                        description: Text("可以手动添加课程，或导入学校课表。")
+                    )
+                } else {
+                    List {
+                        Section("今天 · \(Date.now.formatted(date: .abbreviated, time: .omitted))") {
+                            ForEach(todayCourses) { course in
+                                CourseRow(course: course)
+                            }
+                            .onDelete { offsets in
+                                let ids = offsets.map { todayCourses[$0].id }
+                                store.courses.removeAll { ids.contains($0.id) }
+                                store.save()
+                                Task { await notifications.scheduleAll(for: store.courses) }
+                            }
+                        }
+                    }
+                    .listStyle(.insetGrouped)
+                }
+            }
+            .navigationTitle("我的课表")
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Menu {
+                        Button("导入 CSV 文件", systemImage: "doc.text") { showingImporter = true }
+                        Button("重新生成提醒", systemImage: "bell.badge") {
+                            Task { await notifications.scheduleAll(for: store.courses) }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { showingEditor = true } label: {
+                        Image(systemName: "plus")
+                    }
+                    .accessibilityLabel("添加课程")
+                }
+            }
+            .sheet(isPresented: $showingEditor) {
+                CourseEditorView { course in
+                    store.add(course)
+                    Task { await notifications.scheduleAll(for: store.courses) }
+                }
+            }
+            .fileImporter(
+                isPresented: $showingImporter,
+                allowedContentTypes: [.commaSeparatedText, .plainText],
+                allowsMultipleSelection: false
+            ) { result in
+                do {
+                    guard let url = try result.get().first else { return }
+                    let accessed = url.startAccessingSecurityScopedResource()
+                    defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+                    let text = try String(contentsOf: url, encoding: .utf8)
+                    let imported = try ImportService.parseCSV(text)
+                    guard !imported.isEmpty else {
+                        importError = "没有识别到课程。请检查 CSV 表头和内容。"
+                        return
+                    }
+                    store.courses.append(contentsOf: imported)
+                    store.save()
+                    Task { await notifications.scheduleAll(for: store.courses) }
+                } catch {
+                    importError = error.localizedDescription
+                }
+            }
+            .alert("导入失败", isPresented: Binding(
+                get: { importError != nil },
+                set: { if !$0 { importError = nil } }
+            )) {
+                Button("好", role: .cancel) { importError = nil }
+            } message: {
+                Text(importError ?? "")
+            }
+            .task {
+                await notifications.requestAuthorization()
+                await notifications.scheduleAll(for: store.courses)
+            }
+        }
     }
 }
-
-#if canImport(WatchConnectivity)
-extension WatchSyncService: WCSessionDelegate {
-    public func session(_ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?) {}
-    public func sessionDidBecomeInactive(_ session: WCSession) {}
-    public func sessionDidDeactivate(_ session: WCSession) {}
-}
-#endif
