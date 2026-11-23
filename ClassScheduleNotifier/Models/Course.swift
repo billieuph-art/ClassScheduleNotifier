@@ -30,6 +30,7 @@ public struct Course: Codable, Identifiable, Equatable {
     public let weekday: Weekday
     public let startTime: Date
     public let endTime: Date
+    public let weeks: [Int] // 周数列表，例如 [1,2,3,...,16]
     public let isRecurring: Bool
     public let notes: String
     public let colorHex: String
@@ -42,6 +43,7 @@ public struct Course: Codable, Identifiable, Equatable {
         weekday: Weekday,
         startTime: Date,
         endTime: Date,
+        weeks: [Int] = Array(1...20),
         isRecurring: Bool = true,
         notes: String = "",
         colorHex: String = "#5B8DEF"
@@ -53,6 +55,7 @@ public struct Course: Codable, Identifiable, Equatable {
         self.weekday = weekday
         self.startTime = startTime
         self.endTime = endTime
+        self.weeks = weeks.isEmpty ? Array(1...20) : weeks.sorted()
         self.isRecurring = isRecurring
         self.notes = notes
         self.colorHex = colorHex
@@ -62,5 +65,12 @@ public struct Course: Codable, Identifiable, Equatable {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
         return "\(formatter.string(from: startTime)) - \(formatter.string(from: endTime))"
+    }
+
+    public var weeksText: String {
+        if weeks.count > 10 {
+            return "\(weeks.first ?? 1)-\(weeks.last ?? 20)周"
+        }
+        return weeks.map(String.init).joined(separator: ",") + "周"
     }
 }
