@@ -1,19 +1,35 @@
 import Foundation
 import Combine
 import UserNotifications
+import UIKit
 
 @MainActor
 final class NotificationScheduler: ObservableObject {
+    @Published private(set) var authorizationStatus: UNAuthorizationStatus = .notDetermined
     @Published private(set) var authorizationGranted = false
     private let center = UNUserNotificationCenter.current()
     private let leadTime: TimeInterval = 20 * 60
 
+    func refreshStatus() async {
+        let settings = await center.notificationSettings()
+        authorizationStatus = settings.authorizationStatus
+        authorizationGranted = settings.authorizationStatus == .authorized
+    }
+
     func requestAuthorization() async {
         do {
-            authorizationGranted = try await center.requestAuthorization(options: [.alert, .sound, .badge])
+            let granted = try await center.requestAuthorization(options: [.alert, .sound, .badge])
+            authorizationGranted = granted
+            await refreshStatus()
         } catch {
             authorizationGranted = false
             print("通知授权失败：\(error)")
+        }
+    }
+
+    func openSystemSettings() {
+        if let url = URL(string: UIApplication.openSettingsURLString) {
+            UIApplication.shared.open(url)
         }
     }
 
