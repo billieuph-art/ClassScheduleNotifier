@@ -17,7 +17,8 @@ struct ImportView: View {
     @State private var outcome: ImportOutcome?
     @State private var drafts: [CourseDraft] = []
     @State private var major = SharedSettings.defaultMajor
-    @State private var replaceExisting = true
+    @State private var replaceExisting = false
+    @State private var weekScope: ImportWeekScope = .everyWeek
 
     var body: some View {
         NavigationStack {
@@ -73,8 +74,7 @@ struct ImportView: View {
                 if isProcessing {
                     VStack(spacing: 12) {
                         ProgressView().controlSize(.large)
-                        Text(AIScheduleExtractor.isAvailable ? "Apple 智能正在识别课程表…" : "正在识别课程表…")
-                            .font(.headline)
+                        Text(processingTitle).font(.headline)
                         Text("所有识别均在本机完成，课表不会上传").font(.caption).foregroundStyle(.secondary)
                     }
                     .frame(maxWidth: .infinity)
@@ -98,14 +98,30 @@ struct ImportView: View {
                 .buttonStyle(.plain)
                 .disabled(isProcessing)
 
-                Label(AIScheduleExtractor.isAvailable ? "将使用 Apple 智能识别" : "Apple 智能：\(AIScheduleExtractor.availabilityDescription)，将使用本地规则识别",
-                      systemImage: "apple.intelligence")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .padding(.top, 6)
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(intelligenceCaption, systemImage: AIScheduleExtractor.isAvailable ? "apple.intelligence" : "text.viewfinder")
+                    Text("单双周课表：先导入单周截图并选「所有单周」，再导入双周截图选「所有双周」，并关闭「替换现有课表」。")
+                }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .padding(.top, 6)
             }
             .padding()
         }
+    }
+
+    private var processingTitle: String {
+        if AIScheduleExtractor.isAvailable && SharedSettings.useAppleIntelligence {
+            return "正在识别课程表…"
+        }
+        return "正在用本地规则识别课程表…"
+    }
+
+    private var intelligenceCaption: String {
+        if AIScheduleExtractor.isAvailable {
+            return "可用 Apple 智能辅助；超星网格也会优先用本地规则。"
+        }
+        return "此机型无 Apple 智能，将使用本机 Vision OCR + 本地规则识别（可正常导入截图）。"
     }
 
     private func sourceRow(_ symbol: String, _ title: String, _ subtitle: String) -> some View {
@@ -150,11 +166,28 @@ struct ImportView: View {
             Section {
                 if let outcome {
                     Label("\(outcome.engine.label) · 识别到 \(drafts.count) 节课", systemImage: outcome.engine.symbol)
+                    if let week = outcome.detectedTeachingWeek {
+                        Label("截图显示第 \(week) 周", systemImage: "calendar")
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 TextField("专业（资料归档文件夹）", text: $major)
+
+                Picker("这些课属于", selection: $weekScope) {
+                    ForEach(ImportWeekScope.allCases) { scope in
+                        Text(scope.title(detectedWeek: outcome?.detectedTeachingWeek)).tag(scope)
+                    }
+                }
+                .onChange(of: weekScope) { _, newValue in
+                    ScheduleImporter.applyWeekScope(newValue,
+                                                    detectedWeek: outcome?.detectedTeachingWeek,
+                                                    to: &drafts,
+                                                    overwriteExplicit: true)
+                }
+
                 Toggle("替换现有课表（\(existing.count) 门）", isOn: $replaceExisting)
             } footer: {
-                Text("请核对课程名称、教室和节次，点击可修改，取消勾选可跳过。")
+                Text(weekScopeFooter)
             }
 
             ForEach(1...7, id: \.self) { day in
@@ -186,6 +219,23 @@ struct ImportView: View {
         .scrollContentBackground(.hidden)
     }
 
+    private var weekScopeFooter: String {
+        let week = outcome?.detectedTeachingWeek
+        switch weekScope {
+        case .screenshotWeek:
+            if let week {
+                return "只会写入第 \(week) 周，不会当成全学期每周都上。单双周不同时，请再导入另一周截图并选「所有单周/双周」，且关闭「替换」。"
+            }
+            return "未识别到截图周次时，请改选单周、双周或每周。"
+        case .oddWeeks:
+            return "适用于单周课表。保存时建议关闭「替换」，再导入双周截图合并。"
+        case .evenWeeks:
+            return "适用于双周课表。保存时建议关闭「替换」，与已有单周课合并。"
+        case .everyWeek:
+            return "周次留空表示每周都上。若截图只是某一周，请改选「仅第 N 周」或单/双周。"
+        }
+    }
+
     // MARK: - Actions
 
     private func run(_ extract: @escaping () async throws -> ExtractedDocument) {
@@ -196,10 +246,13 @@ struct ImportView: View {
                 let document = try await extract()
                 let result = await ScheduleImporter.parse(document)
                 if result.drafts.isEmpty {
-                    errorMessage = "没有识别出课程。可以尝试裁剪掉无关区域后重新截图，或手动添加。"
+                    errorMessage = "没有识别出课程。可以尝试裁剪掉无关区域后重新截图，或手动添加。无 Apple 智能时也会用本地规则识别。"
                 } else {
                     drafts = result.drafts.sorted { ($0.weekday, $0.startPeriod) < ($1.weekday, $1.startPeriod) }
                     outcome = result
+                    weekScope = ImportWeekScope.defaultScope(detectedWeek: result.detectedTeachingWeek)
+                    // 单周截图默认合并进现有课表，方便再导双周
+                    replaceExisting = result.detectedTeachingWeek == nil && existing.isEmpty
                 }
             } catch {
                 errorMessage = error.localizedDescription
@@ -208,17 +261,45 @@ struct ImportView: View {
     }
 
     private func save() {
+        let majorName = major.trimmingCharacters(in: .whitespaces)
         if replaceExisting {
             for course in existing { context.delete(course) }
-        }
-        let majorName = major.trimmingCharacters(in: .whitespaces)
-        for draft in drafts where draft.isIncluded && draft.isValid {
-            context.insert(draft.makeCourse(major: majorName))
+            for draft in drafts where draft.isIncluded && draft.isValid {
+                context.insert(draft.makeCourse(major: majorName))
+            }
+        } else {
+            mergeIntoExisting(major: majorName)
         }
         try? context.save()
         if !majorName.isEmpty { SharedSettings.defaults.set(majorName, forKey: SharedSettings.Key.defaultMajor) }
         Task { await AppCoordinator.shared.refreshAll() }
         dismiss()
+    }
+
+    /// 合并导入：同名同学期同节次则合并周次；否则新增（支持单双周两套课）。
+    private func mergeIntoExisting(major: String) {
+        for draft in drafts where draft.isIncluded && draft.isValid {
+            if let match = existing.first(where: {
+                $0.name == draft.name
+                    && $0.weekday == draft.weekday
+                    && $0.startPeriod == draft.startPeriod
+                    && $0.endPeriod == draft.endPeriod
+                    && $0.classroom == draft.classroom
+            }) {
+                if draft.weeks.isEmpty {
+                    match.weeks = []
+                } else if match.weeks.isEmpty {
+                    // 旧数据是「每周」；新导入有明确周次时，改为明确周次（避免继续污染全学期）
+                    match.weeks = draft.weeks
+                } else {
+                    match.weeks = Array(Set(match.weeks + draft.weeks)).sorted()
+                }
+                if match.teacher.isEmpty { match.teacher = draft.teacher }
+                if !major.isEmpty { match.major = major }
+            } else {
+                context.insert(draft.makeCourse(major: major))
+            }
+        }
     }
 }
 
@@ -241,9 +322,7 @@ private struct DraftRow: View {
                     Text(draft.name).font(.headline)
                     Text("\(draft.periodText) · \(draft.timeText) · \(draft.classroom.isEmpty ? "教室未知" : draft.classroom)")
                         .font(.caption).foregroundStyle(.secondary)
-                    if !draft.weeks.isEmpty {
-                        Text(WeeksParser.format(draft.weeks)).font(.caption2).foregroundStyle(.tertiary)
-                    }
+                    Text(WeeksParser.format(draft.weeks)).font(.caption2).foregroundStyle(.tertiary)
                 }
                 Spacer()
                 Button(expanded ? "完成" : "修改") { withAnimation { expanded.toggle() } }
@@ -261,6 +340,10 @@ private struct DraftRow: View {
                     .onChange(of: draft.startPeriod) { _, _ in recomputeTimes() }
                 Stepper("结束：第\(draft.endPeriod)节", value: $draft.endPeriod, in: draft.startPeriod...16)
                     .onChange(of: draft.endPeriod) { _, _ in recomputeTimes() }
+                TextField("周次（如 13 或 1,3,5，留空为每周）", text: Binding(
+                    get: { draft.weeks.isEmpty ? "" : WeeksParser.format(draft.weeks).replacingOccurrences(of: "周", with: "") },
+                    set: { draft.weeks = WeeksParser.parse($0) }
+                ))
             }
         }
         .opacity(draft.isIncluded ? 1 : 0.5)

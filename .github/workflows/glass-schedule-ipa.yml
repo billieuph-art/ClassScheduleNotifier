@@ -90,17 +90,19 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: glass-schedule-sideload-${{ github.run_number }}
-          name: 玻璃课表 侧载版 IPA ${{ github.run_number }}（v1.0.6）
+          name: 玻璃课表 侧载版 IPA ${{ github.run_number }}（v1.0.7）
           target_commitish: ${{ github.sha }}
           prerelease: true
           files: GlassSchedule/GlassSchedule-sideload.ipa
           body: |
-            ## 侧载专用包（v1.0.6）
-            - **课表网格按真实时间轴**：第 1 节 08:50–09:30、第 2 节 09:40–10:20…课间留白；不再把每节画成到下一节开始的 50 分钟
-            - 左侧同时显示上课/下课时间；重排作息后自动同步课程时间
-            - OCR：超星 1-2 与 3-4 两格不再误粘成 1-4
-            - 作息批量时长/课间、通知侧载引导（延续 v1.0.5）
-            - 需要 **iOS 26**；Sideloadly 请勿用 Live Container，并保留 Widget
+            ## 侧载专用包（v1.0.7）
+            - **单双周导入**：截图若显示「第13周」，默认只写入第13周，不再当成全学期每周
+            - 确认页可选：仅该周 / 所有单周 / 所有双周 / 每周；可分两次导入单周+双周并合并
+            - **无 Apple 智能也可截图识别**（本机 Vision OCR + 本地规则）
+            - 课表分钟轴、作息批量、通知侧载引导（延续 v1.0.6）
+            - 需要 **iOS 26**；Sideloadly 请勿用 Live Container
 
-            ### 通知（侧载）
-            设置主页滑到最底部 →「玻璃课表」→「通知」→ 允许通知
+            ### 单双周怎么导
+            1. 导入单周截图 →「这些课属于」选「所有单周」→ 关闭「替换」→ 保存
+            2. 再导入双周截图 → 选「所有双周」→ 关闭「替换」→ 保存
+

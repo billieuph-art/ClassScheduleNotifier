@@ -25,13 +25,15 @@ enum ParseEngine {
 struct ImportOutcome {
     var drafts: [CourseDraft]
     var engine: ParseEngine
+    /// 截图顶栏识别到的教学周，如「第13周」→ 13；没有则为 nil。
+    var detectedTeachingWeek: Int? = nil
 }
 
 enum ScheduleImporter {
     static func parse(_ document: ExtractedDocument) async -> ImportOutcome {
         let slots = SharedSettings.periodSlots
         if !document.icsCourses.isEmpty {
-            return ImportOutcome(drafts: document.icsCourses, engine: .calendar)
+            return ImportOutcome(drafts: document.icsCourses, engine: .calendar, detectedTeachingWeek: nil)
         }
 
         let layout = TextExtractor.layoutDescription(document.items)
@@ -43,8 +45,9 @@ enum ScheduleImporter {
         let plain = [document.plainText, rowsText].filter { !$0.isEmpty }.joined(separator: "\n")
         let aiInput = [layout, document.items.isEmpty ? document.plainText : ""].filter { !$0.isEmpty }.joined(separator: "\n")
 
+        let detectedWeek = TeachingWeekDetector.currentWeek(in: plain)
         // 顶栏「第13周 (本周)」→ 对齐学期第 1 周起点，避免周数显示偏差
-        if let week = TeachingWeekDetector.currentWeek(in: plain),
+        if let week = detectedWeek,
            let start = SemesterCalendar.semesterStart(forTeachingWeek: week) {
             let shown = SemesterCalendar.weekNumber(of: .now, semesterStart: SharedSettings.semesterStart)
             if shown != week {
@@ -59,6 +62,7 @@ enum ScheduleImporter {
 
         var aiDrafts: [CourseDraft] = []
         // 超星网格规则已经很完整时，跳过 AI，避免「程造价 / 编造周次」污染
+        // 无 Apple 智能时仅走本地 Vision OCR + 规则，仍可识别网格课表
         if !strongGrid, SharedSettings.useAppleIntelligence && AIScheduleExtractor.isAvailable && !aiInput.isEmpty {
             do {
                 aiDrafts = try await AIScheduleExtractor.extract(from: aiInput, slots: slots)
@@ -68,23 +72,47 @@ enum ScheduleImporter {
         }
         let aiScore = quality(aiDrafts)
 
-        // 网格课表规则识别通常更准；AI 碎片化严重时不要当主结果。
+        let drafts: [CourseDraft]
+        let engine: ParseEngine
         if strongGrid || (ruleScore >= 8 && ruleScore >= aiScore) {
             if !aiDrafts.isEmpty, !strongGrid {
-                return ImportOutcome(drafts: merge(primary: ruleDrafts, secondary: aiDrafts, fillWeeks: false), engine: .mixed)
+                drafts = merge(primary: ruleDrafts, secondary: aiDrafts, fillWeeks: false)
+                engine = .mixed
+            } else {
+                drafts = dedupe(ruleDrafts)
+                engine = .rules
             }
-            return ImportOutcome(drafts: dedupe(ruleDrafts), engine: .rules)
-        }
-        if aiScore >= 8 && !aiDrafts.isEmpty {
+        } else if aiScore >= 8 && !aiDrafts.isEmpty {
             if !ruleDrafts.isEmpty {
-                return ImportOutcome(drafts: merge(primary: aiDrafts, secondary: ruleDrafts, fillWeeks: true), engine: .mixed)
+                drafts = merge(primary: aiDrafts, secondary: ruleDrafts, fillWeeks: true)
+                engine = .mixed
+            } else {
+                drafts = dedupe(aiDrafts)
+                engine = .appleIntelligence
             }
-            return ImportOutcome(drafts: dedupe(aiDrafts), engine: .appleIntelligence)
+        } else if !ruleDrafts.isEmpty {
+            drafts = dedupe(ruleDrafts)
+            engine = .rules
+        } else {
+            drafts = dedupe(aiDrafts)
+            engine = .appleIntelligence
         }
-        if !ruleDrafts.isEmpty {
-            return ImportOutcome(drafts: dedupe(ruleDrafts), engine: .rules)
+
+        // 截图是「某一周」的课表时，默认只挂到该周，绝不当成全学期每周都上
+        var scoped = drafts
+        applyWeekScope(.defaultScope(detectedWeek: detectedWeek), detectedWeek: detectedWeek, to: &scoped)
+        return ImportOutcome(drafts: scoped, engine: engine, detectedTeachingWeek: detectedWeek)
+    }
+
+    /// 把周次范围写回草稿。
+    /// - overwriteExplicit: false 时保留格子里已写明的周次（如 1-8,10-16）；true 时按用户选择的单/双周覆盖。
+    static func applyWeekScope(_ scope: ImportWeekScope, detectedWeek: Int?, to drafts: inout [CourseDraft],
+                               overwriteExplicit: Bool = false) {
+        let weeks = scope.weeks(detectedWeek: detectedWeek)
+        for index in drafts.indices {
+            if !overwriteExplicit, !drafts[index].weeks.isEmpty { continue }
+            drafts[index].weeks = weeks
         }
-        return ImportOutcome(drafts: dedupe(aiDrafts), engine: .appleIntelligence)
     }
 
     private static func ruleBasedDrafts(items: [TextItem], plain: String, slots: [PeriodSlot]) -> [CourseDraft] {

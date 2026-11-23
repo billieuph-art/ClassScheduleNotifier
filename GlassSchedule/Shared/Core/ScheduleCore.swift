@@ -229,6 +229,47 @@ enum TeachingWeekDetector {
     }
 }
 
+/// 截图导入时的上课周次范围（单双周课表可分两次导入）。
+enum ImportWeekScope: String, CaseIterable, Identifiable {
+    case screenshotWeek
+    case oddWeeks
+    case evenWeeks
+    case everyWeek
+
+    var id: String { rawValue }
+
+    func title(detectedWeek: Int?) -> String {
+        switch self {
+        case .screenshotWeek:
+            if let w = detectedWeek { return "仅第 \(w) 周（截图所示）" }
+            return "仅截图中的那一周"
+        case .oddWeeks: return "所有单周（1、3、5…）"
+        case .evenWeeks: return "所有双周（2、4、6…）"
+        case .everyWeek: return "每周都上"
+        }
+    }
+
+    func weeks(detectedWeek: Int?, through maxWeek: Int = 20) -> [Int] {
+        let maxWeek = max(1, min(maxWeek, 30))
+        switch self {
+        case .screenshotWeek:
+            if let w = detectedWeek, (1...maxWeek).contains(w) { return [w] }
+            return []
+        case .oddWeeks:
+            return Array(stride(from: 1, through: maxWeek, by: 2))
+        case .evenWeeks:
+            return Array(stride(from: 2, through: maxWeek, by: 2))
+        case .everyWeek:
+            return []
+        }
+    }
+
+    /// 截图标了第 N 周时，默认「仅该周」，避免把单周课表当成全学期。
+    static func defaultScope(detectedWeek: Int?) -> ImportWeekScope {
+        detectedWeek == nil ? .everyWeek : .screenshotWeek
+    }
+}
+
 enum ScheduleQuery {
     static func occurrences(of courses: [CourseSnapshot], from: Date, to: Date, semesterStart: Date) -> [ClassOccurrence] {
         let cal = SemesterCalendar.calendar
@@ -294,6 +335,12 @@ enum WeeksParser {
 
     static func format(_ weeks: [Int]) -> String {
         guard !weeks.isEmpty else { return "每周" }
+        if weeks.count == 1 { return "第\(weeks[0])周" }
+        let odd = weeks.allSatisfy { $0 % 2 == 1 }
+        let even = weeks.allSatisfy { $0 % 2 == 0 }
+        let maxWeek = weeks.max() ?? 0
+        if odd, weeks == Array(stride(from: 1, through: maxWeek, by: 2)) { return "单周(至\(maxWeek))" }
+        if even, weeks == Array(stride(from: 2, through: maxWeek, by: 2)) { return "双周(至\(maxWeek))" }
         var ranges: [String] = []
         var start = weeks[0], prev = weeks[0]
         for w in weeks.dropFirst() + [Int.max] {
