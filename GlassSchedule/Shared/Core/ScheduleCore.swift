@@ -32,6 +32,23 @@ enum PeriodTable {
         let end = slots.min { abs($0.endMinutes - endMinutes) < abs($1.endMinutes - endMinutes) }!
         return (start.index, max(start.index, end.index))
     }
+
+    /// 按「每节课时长 + 课间休息」从第一节上课时间起连续排完所有节次。
+    /// 例：首节 08:50、时长 40、课间 10 → 08:50–09:30、09:40–10:20、10:30–11:10…
+    static func cascade(count: Int, firstStartMinutes: Int, durationMinutes: Int, breakMinutes: Int) -> [PeriodSlot] {
+        let duration = max(5, min(durationMinutes, 180))
+        let gap = max(0, min(breakMinutes, 120))
+        let count = max(1, min(count, 20))
+        var start = max(0, min(firstStartMinutes, 24 * 60 - duration - 1))
+        var result: [PeriodSlot] = []
+        for index in 1...count {
+            let end = min(start + duration, 24 * 60 - 1)
+            result.append(PeriodSlot(index: index, startMinutes: start, endMinutes: max(start + 1, end)))
+            start = end + gap
+            if start >= 24 * 60 - 5 { break }
+        }
+        return result
+    }
 }
 
 enum TimeFormat {

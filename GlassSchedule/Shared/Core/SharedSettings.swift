@@ -26,6 +26,8 @@ enum SharedSettings {
         static let exportToFiles = "exportToFiles"
         static let defaultMajor = "defaultMajor"
         static let periodSlots = "periodSlots"
+        static let periodDurationMinutes = "periodDurationMinutes"
+        static let periodBreakMinutes = "periodBreakMinutes"
         static let payload = "schedulePayload"
         static let showWeekend = "showWeekend"
     }
@@ -42,6 +44,8 @@ enum SharedSettings {
             Key.exportToFiles: true,
             Key.defaultMajor: "我的专业",
             Key.showWeekend: false,
+            Key.periodDurationMinutes: 45,
+            Key.periodBreakMinutes: 10,
         ])
     }
 
@@ -67,6 +71,21 @@ enum SharedSettings {
             return slots
         }
         set { defaults.set(try? JSONEncoder().encode(newValue), forKey: Key.periodSlots) }
+    }
+
+    /// 批量作息：每节课时长（分钟）。
+    static var periodDurationMinutes: Int {
+        get {
+            let value = defaults.integer(forKey: Key.periodDurationMinutes)
+            return value == 0 ? 45 : max(5, min(value, 180))
+        }
+        set { defaults.set(max(5, min(newValue, 180)), forKey: Key.periodDurationMinutes) }
+    }
+
+    /// 批量作息：课间休息（分钟）。
+    static var periodBreakMinutes: Int {
+        get { max(0, min(defaults.integer(forKey: Key.periodBreakMinutes), 120)) }
+        set { defaults.set(max(0, min(newValue, 120)), forKey: Key.periodBreakMinutes) }
     }
 
     static var payload: SchedulePayload? {

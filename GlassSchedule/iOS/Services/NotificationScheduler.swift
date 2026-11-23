@@ -20,6 +20,8 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
                                          icon: UNNotificationActionIcon(systemImageName: "timer"))
         let category = UNNotificationCategory(identifier: Self.categoryID, actions: [start], intentIdentifiers: [])
         center.setNotificationCategories([category])
+        // 让系统在「设置 › 玻璃课表」里出现通知入口（侧载尤其需要先登记一次）
+        UIApplication.shared.registerForRemoteNotifications()
     }
 
     enum PermissionOutcome: Equatable {
@@ -31,13 +33,21 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
         var message: String {
             switch self {
             case .granted:
-                return "通知权限已开启，上课前提醒会生效。"
+                return "通知权限已开启，上课前提醒会生效。可再点「发送测试通知」确认。"
             case .deniedNeedsSettings:
-                return "侧载安装时系统常常不弹出授权框（UNError 1）。请到「设置 › 通知 › 玻璃课表」打开「允许通知」，然后回到 App 再点一次「重新检查通知权限」。"
+                return """
+                侧载时系统常不弹授权框，且「设置 › 通知」列表里可能暂时没有本 App。
+
+                请按下面做：
+                1. 点「打开本 App 设置页」
+                2. 在「设置」主页滑到最底部，点「玻璃课表」
+                3. 打开「通知 › 允许通知」
+                4. 回到 App 发送测试通知
+                """
             case .provisional:
-                return "已开启安静通知。如需横幅提醒，请到系统设置里把通知改为「横幅」。"
+                return "已开启安静通知（不弹横幅）。如需横幅，请到「玻璃课表 › 通知」改成横幅提醒。"
             case .failed(let detail):
-                return "请求失败：\(detail)\n\n请到「设置 › 通知 › 玻璃课表」手动打开允许通知。"
+                return "请求失败：\(detail)\n\n请打开「设置」最底部的「玻璃课表 › 通知」手动允许。"
             }
         }
 
@@ -52,14 +62,17 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
     var authorizationStatusText: String {
         get async {
             let settings = await center.notificationSettings()
+            let pending = await center.pendingNotificationRequests().filter { $0.identifier.hasPrefix(Self.idPrefix) }.count
+            let base: String
             switch settings.authorizationStatus {
-            case .authorized: return "已开启"
-            case .provisional: return "安静通知"
-            case .ephemeral: return "临时授权"
-            case .denied: return "已关闭（需去系统设置开启）"
-            case .notDetermined: return "尚未授权（侧载请去系统设置打开）"
-            @unknown default: return "未知"
+            case .authorized: base = "已开启"
+            case .provisional: base = "安静通知"
+            case .ephemeral: base = "临时授权"
+            case .denied: base = "已关闭（去 App 设置页开启）"
+            case .notDetermined: base = "尚未登记（侧载请去 App 设置页打开）"
+            @unknown default: base = "未知"
             }
+            return pending > 0 ? "\(base) · 已排 \(pending) 条" : base
         }
     }
 
@@ -75,8 +88,10 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
         let status = await center.notificationSettings().authorizationStatus
         switch status {
         case .authorized:
+            UIApplication.shared.registerForRemoteNotifications()
             return .granted
         case .provisional, .ephemeral:
+            UIApplication.shared.registerForRemoteNotifications()
             return .provisional
         case .denied:
             return .deniedNeedsSettings
@@ -86,16 +101,21 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
             return .failed("未知的授权状态")
         }
 
-        // 1) 先尝试标准弹窗授权
-        if let outcome = await request(options: [.alert, .sound, .badge]) {
+        // providesAppNotificationSettings：在系统通知设置里挂上「App 通知设置」入口，侧载更容易被登记
+        let standard: UNAuthorizationOptions = [.alert, .sound, .badge, .providesAppNotificationSettings]
+        if let outcome = await request(options: standard) {
             return outcome
         }
-        // 2) 再试安静通知（部分侧载环境只允许 provisional）
-        if let outcome = await request(options: [.alert, .sound, .badge, .provisional]) {
+        if let outcome = await request(options: standard.union(.provisional)) {
+            return outcome
+        }
+        // 再试一次最简选项，尽量让系统把 App 写进设置列表
+        if let outcome = await request(options: [.alert, .providesAppNotificationSettings]) {
             return outcome
         }
 
-        // 3) 仍失败：再读一次状态；很多情况下其实已经变成 denied / notDetermined，只能去设置
+        UIApplication.shared.registerForRemoteNotifications()
+
         let again = await center.notificationSettings().authorizationStatus
         switch again {
         case .authorized: return .granted
@@ -107,24 +127,30 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
     private func request(options: UNAuthorizationOptions) async -> PermissionOutcome? {
         do {
             let granted = try await center.requestAuthorization(options: options)
+            UIApplication.shared.registerForRemoteNotifications()
             if granted {
                 return options.contains(.provisional) ? .provisional : .granted
             }
-            // 用户点了不允许，或系统没弹窗直接返回 false
             let status = await center.notificationSettings().authorizationStatus
             if status == .denied || status == .notDetermined { return .deniedNeedsSettings }
             return .deniedNeedsSettings
         } catch {
             let ns = error as NSError
-            // UNErrorCode.notificationsNotAllowed = 1：侧载常见，当作需去设置处理，不要只弹原始错误。
+            // UNErrorCode.notificationsNotAllowed = 1：侧载常见
             if ns.domain == "UNErrorDomain", ns.code == 1 {
-                return nil // 交给上层尝试 provisional / 最终去设置
+                return nil
             }
             return .failed(error.localizedDescription)
         }
     }
 
-    /// 打开系统里本 App 的通知设置页（比通用设置页更准确）。
+    /// 打开「设置 › 玻璃课表」本 App 页（侧载时通知开关通常在这里，而不是通知总列表）。
+    func openAppSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
+    }
+
+    /// 优先打开通知专用设置；不可用则退回本 App 设置页。
     func openNotificationSettings() {
         let candidates = [
             UIApplication.openNotificationSettingsURLString,
@@ -177,7 +203,7 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
     func scheduleTestNotification() async -> String {
         let settings = await center.notificationSettings()
         guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
-            return "还没有通知权限，请先到系统设置打开「允许通知」。"
+            return "还没有通知权限。请点「打开本 App 设置页」，在设置最底部的「玻璃课表 › 通知」里打开允许通知。"
         }
         let content = UNMutableNotificationContent()
         content.title = "玻璃课表"
@@ -189,7 +215,7 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
             try await center.add(request)
             return "已安排 5 秒后的测试通知，请回到桌面或锁屏查看。"
         } catch {
-            return "测试通知发送失败：\(error.localizedDescription)"
+            return "测试通知发送失败：\(error.localizedDescription)\n\n若持续失败，多半是侧载签名未带上通知能力，请用 Sideloadly 重新签名安装（不要用 Live Container）。"
         }
     }
 
@@ -206,6 +232,11 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
                                             didReceive response: UNNotificationResponse) async {
         await startActivity(from: response.notification.request.content.userInfo)
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                            openSettingsFor notification: UNNotification?) {
+        // 系统「App 通知设置」按钮会回调这里；界面已在设置里，无需额外跳转。
     }
 
     private nonisolated func startActivity(from userInfo: [AnyHashable: Any]) async {

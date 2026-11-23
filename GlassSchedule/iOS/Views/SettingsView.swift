@@ -38,16 +38,20 @@ struct SettingsView: View {
                 Section {
                     Stepper("上课前 \(reminderMinutes) 分钟提醒", value: $reminderMinutes, in: 5...120, step: 5)
                     LabeledContent("通知权限", value: notificationStatus)
-                    Button("开启通知权限") {
+                    Button("开启 / 重新检查通知权限") {
                         Task { await handleNotificationPermission() }
                     }
-                    Button("打开系统通知设置") {
+                    Button("打开本 App 设置页") {
+                        NotificationScheduler.shared.openAppSettings()
+                    }
+                    Button("打开通知设置") {
                         NotificationScheduler.shared.openNotificationSettings()
                     }
                     Button("发送测试通知（5秒后）") {
                         Task {
                             permissionAlert = await NotificationScheduler.shared.scheduleTestNotification()
-                            openSettingsAfterAlert = false
+                            openSettingsAfterAlert = permissionAlert?.contains("系统设置") == true
+                                || permissionAlert?.contains("没有通知权限") == true
                         }
                     }
                     Toggle("自动开启实时活动", isOn: $autoLiveActivity)
@@ -61,7 +65,7 @@ struct SettingsView: View {
                 } header: {
                     Text("提醒与实时活动")
                 } footer: {
-                    Text("侧载安装时系统经常不弹通知授权框（会报 UNError 1）。请点「打开系统通知设置」，在「通知 › 玻璃课表」里打开「允许通知」，再回来发测试通知。实时活动需保留 Widget 扩展。")
+                    Text("侧载常见：系统不弹授权框，且「设置 › 通知」列表里暂时找不到本 App。请先点「开启 / 重新检查」，再点「打开本 App 设置页」——在设置主页滑到最底部找到「玻璃课表」，打开里面的「通知」。Sideloadly 安装时不要用 Live Container，并保留 Widget 扩展。")
                 }
 
                 Section {
@@ -107,7 +111,8 @@ struct SettingsView: View {
             }
             .alert("通知权限", isPresented: Binding(get: { permissionAlert != nil }, set: { if !$0 { permissionAlert = nil } })) {
                 if openSettingsAfterAlert {
-                    Button("去通知设置") { NotificationScheduler.shared.openNotificationSettings() }
+                    Button("打开本 App 设置页") { NotificationScheduler.shared.openAppSettings() }
+                    Button("打开通知设置") { NotificationScheduler.shared.openNotificationSettings() }
                     Button("取消", role: .cancel) {}
                 } else {
                     Button("好", role: .cancel) {}
@@ -140,18 +145,35 @@ struct SettingsView: View {
         if outcome == .granted || outcome == .provisional {
             await AppCoordinator.shared.refreshAll()
         } else if outcome.shouldOpenSettings {
-            // 侧载环境几乎总会走到这里：稍延迟后自动跳转系统通知设置，避免只看到错误。
+            // 侧载时通知总列表常没有本 App，优先跳到「设置 › 玻璃课表」本页。
             try? await Task.sleep(for: .milliseconds(400))
-            NotificationScheduler.shared.openNotificationSettings()
+            NotificationScheduler.shared.openAppSettings()
         }
     }
 }
 
 struct PeriodTableEditor: View {
     @State private var slots = SharedSettings.periodSlots
+    @State private var durationMinutes = SharedSettings.periodDurationMinutes
+    @State private var breakMinutes = SharedSettings.periodBreakMinutes
+    @State private var firstStartMinutes: Int = SharedSettings.periodSlots.first?.startMinutes ?? 8 * 60
+    @State private var autoCascade = true
+    @State private var suppressCascade = false
 
     var body: some View {
         Form {
+            Section {
+                Stepper("每节课时长 \(durationMinutes) 分钟", value: $durationMinutes, in: 5...120, step: 5)
+                Stepper("课间休息 \(breakMinutes) 分钟", value: $breakMinutes, in: 0...60, step: 5)
+                DatePicker("第一节上课", selection: binding(for: $firstStartMinutes), displayedComponents: .hourAndMinute)
+                Toggle("改完后自动重排后面所有节", isOn: $autoCascade)
+                Button("按以上规则重新生成全部作息") { applyCascade() }
+            } header: {
+                Text("批量设置")
+            } footer: {
+                Text("例：第一节 08:50、时长 40、课间 10 → 第二节自动 09:40–10:20，第三节 10:30–11:10，以此类推。若中间有午休，可先关掉自动重排，再手动改某一节的上课时间。")
+            }
+
             ForEach($slots) { $slot in
                 Section("第 \(slot.index) 节") {
                     DatePicker("上课", selection: binding(for: $slot.startMinutes), displayedComponents: .hourAndMinute)
@@ -161,13 +183,20 @@ struct PeriodTableEditor: View {
             Section {
                 Button("增加一节") {
                     let last = slots.last
-                    let start = (last?.endMinutes ?? 470) + 10
-                    slots.append(PeriodSlot(index: slots.count + 1, startMinutes: start, endMinutes: start + 45))
+                    let start = (last?.endMinutes ?? firstStartMinutes) + breakMinutes
+                    slots.append(PeriodSlot(index: slots.count + 1, startMinutes: start, endMinutes: start + durationMinutes))
                 }
                 if slots.count > 1 {
                     Button("删除最后一节", role: .destructive) { slots.removeLast() }
                 }
-                Button("恢复默认") { slots = PeriodTable.defaultSlots }
+                Button("恢复默认") {
+                    suppressCascade = true
+                    slots = PeriodTable.defaultSlots
+                    firstStartMinutes = slots.first?.startMinutes ?? 8 * 60
+                    durationMinutes = 45
+                    breakMinutes = 10
+                    suppressCascade = false
+                }
             }
             Section {
                 Button("按新作息更新所有课程时间") { applyToCourses() }
@@ -176,10 +205,36 @@ struct PeriodTableEditor: View {
             }
         }
         .navigationTitle("作息时间")
+        .onChange(of: durationMinutes) { _, newValue in
+            SharedSettings.periodDurationMinutes = newValue
+            if autoCascade { applyCascade() }
+        }
+        .onChange(of: breakMinutes) { _, newValue in
+            SharedSettings.periodBreakMinutes = newValue
+            if autoCascade { applyCascade() }
+        }
+        .onChange(of: firstStartMinutes) { _, _ in
+            if autoCascade { applyCascade() }
+        }
         .onChange(of: slots) { _, newValue in
+            guard !suppressCascade else { return }
             SharedSettings.periodSlots = newValue
             Task { await AppCoordinator.shared.refreshAll() }
         }
+    }
+
+    private func applyCascade() {
+        suppressCascade = true
+        let count = max(slots.count, 1)
+        slots = PeriodTable.cascade(count: count,
+                                    firstStartMinutes: firstStartMinutes,
+                                    durationMinutes: durationMinutes,
+                                    breakMinutes: breakMinutes)
+        SharedSettings.periodDurationMinutes = durationMinutes
+        SharedSettings.periodBreakMinutes = breakMinutes
+        SharedSettings.periodSlots = slots
+        suppressCascade = false
+        Task { await AppCoordinator.shared.refreshAll() }
     }
 
     private func applyToCourses() {

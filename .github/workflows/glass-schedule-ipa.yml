@@ -90,20 +90,21 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: glass-schedule-sideload-${{ github.run_number }}
-          name: 玻璃课表 侧载版 IPA ${{ github.run_number }}（v1.0.4）
+          name: 玻璃课表 侧载版 IPA ${{ github.run_number }}（v1.0.5）
           target_commitish: ${{ github.sha }}
           prerelease: true
           files: GlassSchedule/GlassSchedule-sideload.ipa
           body: |
-            ## 侧载专用包（v1.0.4）
-            - **课表截图识别**：拼接竖排碎片课名（如「水利工+程造价+二@231+3」→「水利工程造价二@2313」），正确拆教室号
-            - 优先用网格规则识别超星「今天/周二 + 课程@教室」；避免 AI 输出「程造价」残片或编造周次
-            - 识别顶栏「第 N 周」并校准教学周；表头日期对齐星期列
+            ## 侧载专用包（v1.0.5）
+            - **作息批量设置**：可设「每节课时长」「课间休息」，后面各节自动顺排（如 40 分钟 + 课间 10 分钟）
+            - **通知引导**：侧载时「设置 › 通知」列表常没有本 App；请打开「设置」最底部「玻璃课表 › 通知」
+            - 课表 OCR / 教学周校准（延续 v1.0.4）
             - Bundle ID：`com.billieuphart.glassschedule`（+ 小组件 `.widgets`）
             - 无 Watch / 无 App Group / 无时效通知权限；已 ad-hoc 签名
-            - 需要 **iOS 26**；安装时请保留 Widget 扩展
+            - 需要 **iOS 26**；Sideloadly 请勿用 Live Container，并保留 Widget 扩展
 
-            ### 通知权限怎么开
-            1. 打开 App → 设置 →「打开系统通知设置」
-            2. 在「通知 › 玻璃课表」打开「允许通知」
-            3. 回到 App 点「发送测试通知」确认
+            ### 通知权限怎么开（侧载）
+            1. App → 设置 →「开启 / 重新检查通知权限」
+            2. 再点「打开本 App 设置页」
+            3. 在系统设置主页滑到最底部 →「玻璃课表」→「通知」→ 允许通知
+            4. 回 App 点「发送测试通知」
