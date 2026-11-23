@@ -1,98 +1,58 @@
 # ClassScheduleNotifier
 
-一个面向 iPhone / Apple Watch / 灵动岛的 SwiftUI 课程提醒应用原型，支持：
+一个面向 iPhone / Apple Watch / 灵动岛的 SwiftUI 课程提醒应用，支持：
 
-- 课表导入（CSV / ICS / 手动录入）
+- 课表导入（CSV / **截图 OCR** / 手动录入）
 - 上课前 20 分钟本地通知
 - Live Activities 实时状态
 - Apple Watch 课程展示与倒计时
 - 今天和本周课程视图
 
-本仓库是一个可以直接导入 Xcode 的 SwiftUI 架构骨架，包含核心模型、导入逻辑、通知调度和 Apple 生态展示层代码。
+## 最近改进（2026-11）
+
+- **图片导入**：使用 Vision OCR 支持中文课表截图识别，尽量提取课程名、教师、教室、周数、时间。
+- **实时活动**：改进为使用系统倒计时机制，减少频繁更新。
+- **通知权限**：新增设置页，「开启通知权限」按钮会正确请求权限；若被拒绝则跳转系统设置。
 
 ## 目录结构
 
 - App/
-  - `ClassScheduleNotifierApp.swift`
 - Models/
-  - `Course.swift`
 - Services/
-  - `ScheduleStore.swift`
-  - `ImportService.swift`
-  - `NotificationScheduler.swift`
+  - `ImportService.swift`（含 OCR）
   - `LiveActivityController.swift`
-  - `WatchSyncService.swift`
+  - `NotificationScheduler.swift`
 - Views/
   - `ContentView.swift`
+  - `SettingsView.swift`
+  - `CourseEditorView.swift`
+  - `CourseRow.swift`
 
-## 功能说明
+## 使用说明
 
-### 1. 课表导入
+### 图片导入
 
-支持以下导入方式：
+在主界面点击左上角菜单 → 「导入课表截图」，选择从相册中的课表图片。
 
-- `.csv` 文件导入
-- `.ics` 日历文件导入
-- 手动录入课程
+识别依赖本机 Vision 框架，对清晰、对比度好的中文课表截图效果较好。复杂表格可能需要手动校对。
 
-可在 `ImportService.swift` 中扩展 HTML / 学校导出格式解析。
+### 通知权限
 
-### 2. 提前 20 分钟提醒
+进入设置（右上角齿轮）→ 「开启通知权限」。如果之前拒绝过，会自动打开系统设置。
 
-`NotificationScheduler` 会在每次课程更新后重建通知，并在课程开始前 20 分钟触发系统本地通知。
+### Live Activities
 
-### 3. 实时活动（Live Activities）
-
-`LiveActivityController` 会在 iPhone 锁屏 / 灵动岛区域展示下一节课状态：
-
-- 课程名
-- 地点
-- 倒计时
-- 当前状态（即将开始 / 上课中 / 已结束）
-
-### 4. Apple Watch 显示
-
-`WatchSyncService` 负责同步下一节课信息到 Apple Watch，并在 watchOS 端展示课程状态与倒计时。
+需要在 Xcode 中为 Target 开启 Live Activities Capability，并建议添加 Widget Extension 来定义实时活动的 UI。当前代码可以正确启动活动，但完整显示依赖扩展中的 ActivityConfiguration。
 
 ## 开发环境
 
 - Xcode 15+
 - iOS 17.0+
-- watchOS 10.0+
 - Swift 5.9+
 
 ## 快速开始
 
-1. 在 GitHub 中克隆本仓库
-2. 用 Xcode 打开项目目录
-3. 新建一个 iOS + watchOS App Target
-4. 将 `App/`、`Models/`、`Services/`、`Views/` 下的文件复制到新项目中
-5. 配置通知权限和 Live Activities Capability
-6. 运行到 iPhone / Apple Watch 模拟器
-
-## 重点实现说明
-
-- `Course` 数据模型：代表一节课
-- `ScheduleStore`：本地存储 & 数据更新
-- `ImportService`：负责解析 `.csv` / `.ics`
-- `NotificationScheduler`：用于 20 分钟前通知
-- `LiveActivityController`：用于灵动岛与锁屏显示
-- `WatchSyncService`：用于 watchOS 实时同步
-
-## 适合扩展的方向
-
-- 支持学校官网导出格式解析
-- 支持课程变更自动更新通知
-- 支持 `WidgetKit` 小组件
-- 支持课表周次切换
-- 支持周末课程 / 节假日调课
-
-## 备注
-
-这是一个完整的工程思路与代码骨架，不依赖在线后端即可运行。如果你需要，我下一步可以继续把它扩展成：
-
-- 完整可运行的 Xcode 项目结构
-- Apple Watch target 代码
-- Live Activities 扩展代码
-- 真实 CSV / ICS 导入实现
-
+1. 克隆仓库
+2. 用 Xcode 打开
+3. 确保已开启通知与 Live Activities 相关 Capability
+4. 运行到设备或模拟器
