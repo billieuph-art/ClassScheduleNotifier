@@ -10,10 +10,15 @@ struct ClassScheduleNotifierApp: App {
             ContentView()
                 .environmentObject(scheduleStore)
                 .environmentObject(notificationScheduler)
-                .onAppear {
-                    notificationScheduler.requestAuthorization()
+                .task {
                     scheduleStore.load()
-                    notificationScheduler.scheduleAll(for: scheduleStore.courses)
+                    await notificationScheduler.requestAuthorization()
+                    await notificationScheduler.scheduleAll(for: scheduleStore.courses)
+                }
+                .onChange(of: scheduleStore.courses) { _, courses in
+                    scheduleStore.save()
+                    Task { await notificationScheduler.scheduleAll(for: courses) }
+                    WatchSyncService.shared.sendCourses(courses)
                 }
         }
     }
