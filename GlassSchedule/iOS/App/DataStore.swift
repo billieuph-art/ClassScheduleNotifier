@@ -10,7 +10,8 @@ final class DataStore {
     private init() {
         let schema = Schema([Course.self, StudyMaterial.self])
         let configuration: ModelConfiguration
-        if let url = FileManager.default
+        if AppGroup.isAvailable,
+           let url = FileManager.default
             .containerURL(forSecurityApplicationGroupIdentifier: AppGroup.id)?
             .appendingPathComponent("GlassSchedule.store") {
             configuration = ModelConfiguration(schema: schema, url: url)

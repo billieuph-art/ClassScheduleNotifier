@@ -2,8 +2,8 @@ import BackgroundTasks
 import Foundation
 
 enum BackgroundScheduler {
-    static let refreshID = "com.example.glassschedule.refresh"
-    static let photosID = "com.example.glassschedule.photos"
+    static let refreshID = "com.billieuphart.glassschedule.refresh"
+    static let photosID = "com.billieuphart.glassschedule.photos"
 
     static func register() {
         BGTaskScheduler.shared.register(forTaskWithIdentifier: refreshID, using: nil) { task in

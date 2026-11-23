@@ -37,7 +37,7 @@ struct OnboardingView: View {
                         feature("doc.viewfinder", "截图或 PDF 一键导入课表", "Apple 智能自动识别课程、教室、节次")
                         feature("bell.badge", "上课前 20 分钟提醒", "实时活动在锁屏与灵动岛倒计时")
                         feature("photo.stack", "上课照片自动归档", "按专业与课程整理成复习资料")
-                        feature("applewatch", "Apple Watch 同步", "抬腕查看下一节课")
+                        feature("iphone.gen3", "锁屏实时活动", "上课倒计时显示在灵动岛")
                     }
                 }
                 Spacer()

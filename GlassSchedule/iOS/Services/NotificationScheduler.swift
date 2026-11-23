@@ -106,7 +106,8 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
             content.subtitle = course.classroom.isEmpty ? course.periodText : "\(course.classroom) · \(course.periodText)"
             content.body = "\(WeekdayName.full(course.weekday)) \(course.timeText)" + (course.teacher.isEmpty ? "" : " · \(course.teacher)")
             content.sound = .default
-            content.interruptionLevel = .timeSensitive
+            // 侧载/免费证书没有 time-sensitive 权限，用 active 避免安装失败。
+            content.interruptionLevel = .active
             content.categoryIdentifier = Self.categoryID
             content.threadIdentifier = course.id.uuidString
             content.userInfo = ["courseID": course.id.uuidString, "start": occurrence.start.timeIntervalSince1970]

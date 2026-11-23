@@ -1,10 +1,9 @@
 name: GlassSchedule
 
 options:
-  bundleIdPrefix: com.example
+  bundleIdPrefix: com.billieuphart
   deploymentTarget:
     iOS: "26.0"
-    watchOS: "26.0"
   xcodeVersion: "26.0"
   createIntermediateGroups: true
   developmentLanguage: zh-Hans
@@ -12,14 +11,15 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "1.0.1"
-    CURRENT_PROJECT_VERSION: "2"
-    DEVELOPMENT_TEAM: ""   # 在这里填你的 Apple Developer Team ID
+    MARKETING_VERSION: "1.0.2"
+    CURRENT_PROJECT_VERSION: "3"
+    DEVELOPMENT_TEAM: ""
     CODE_SIGN_STYLE: Automatic
     ENABLE_USER_SCRIPT_SANDBOXING: YES
     LOCALIZATION_PREFERS_STRING_CATALOGS: YES
 
 targets:
+  # 侧载友好：仅 App + 小组件（实时活动需要）。不含 Watch、不含 App Group / 时效通知权限。
   GlassSchedule:
     type: application
     platform: iOS
@@ -41,27 +41,25 @@ targets:
         UIApplicationSceneManifest:
           UIApplicationSupportsMultipleScenes: false
         NSSupportsLiveActivities: true
+        NSSupportsLiveActivitiesFrequentUpdates: true
         NSPhotoLibraryUsageDescription: 玻璃课表需要读取照片，按拍摄时间把上课期间拍的板书、PPT 照片归类到对应课程的复习资料中。
         NSPhotoLibraryAddUsageDescription: 玻璃课表会在“照片”中按专业创建文件夹、按课程创建“复习资料”相簿。
         UIBackgroundModes: [fetch, processing]
         BGTaskSchedulerPermittedIdentifiers:
-          - com.example.glassschedule.refresh
-          - com.example.glassschedule.photos
+          - com.billieuphart.glassschedule.refresh
+          - com.billieuphart.glassschedule.photos
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
-    entitlements:
-      path: iOS/GlassSchedule.entitlements
-      properties:
-        com.apple.security.application-groups: [group.com.example.glassschedule]
-        com.apple.developer.usernotifications.time-sensitive: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.glassschedule
+        PRODUCT_BUNDLE_IDENTIFIER: com.billieuphart.glassschedule
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1"
+        # 侧载包不做自动签名，由 CI 做 ad-hoc 签名后再用 Sideloadly 重签
+        CODE_SIGNING_ALLOWED: "NO"
     dependencies:
       - target: GlassScheduleWidgets
-      - target: GlassScheduleWatch
+        embed: true
 
   GlassScheduleWidgets:
     type: app-extension
@@ -78,32 +76,8 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
-    entitlements:
-      path: Widgets/GlassScheduleWidgets.entitlements
-      properties:
-        com.apple.security.application-groups: [group.com.example.glassschedule]
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.glassschedule.widgets
+        PRODUCT_BUNDLE_IDENTIFIER: com.billieuphart.glassschedule.widgets
         TARGETED_DEVICE_FAMILY: "1"
-
-  GlassScheduleWatch:
-    type: application
-    platform: watchOS
-    sources:
-      - path: Watch
-      - path: Shared/Core
-    info:
-      path: Watch/Info.plist
-      properties:
-        CFBundleDisplayName: 玻璃课表
-        CFBundleShortVersionString: $(MARKETING_VERSION)
-        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
-        WKApplication: true
-        WKCompanionAppBundleIdentifier: com.example.glassschedule
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.example.glassschedule.watchkitapp
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        TARGETED_DEVICE_FAMILY: "4"
-        SKIP_INSTALL: YES
+        CODE_SIGNING_ALLOWED: "NO"

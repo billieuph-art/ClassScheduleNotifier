@@ -1,12 +1,19 @@
 import Foundation
 
 enum AppGroup {
-    static let id = "group.com.example.glassschedule"
+    /// 侧载版不申请 App Group 权限，避免免费证书签名失败；有正式证书时可改回 group. 前缀。
+    static let id = "group.com.billieuphart.glassschedule"
+    static var isAvailable: Bool {
+        FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: id) != nil
+    }
 }
 
-/// 所有设置都放在 App Group 的 UserDefaults 中，主 App 与小组件共享。
+/// 优先用 App Group（正式签名），否则退回标准 UserDefaults（侧载可用）。
 enum SharedSettings {
-    static let defaults: UserDefaults = UserDefaults(suiteName: AppGroup.id) ?? .standard
+    static let defaults: UserDefaults = {
+        if AppGroup.isAvailable, let suite = UserDefaults(suiteName: AppGroup.id) { return suite }
+        return .standard
+    }()
 
     enum Key {
         static let semesterStart = "semesterStart"
