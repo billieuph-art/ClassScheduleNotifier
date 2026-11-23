@@ -1,23 +1,21 @@
-name: iOS Simulator Build
+name: iOS Build & IPA
 
 on:
   push:
     branches: [main]
-  pull_request:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
-  build:
+  build-simulator:
+    name: Simulator Build
     runs-on: macos-15
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
       - name: Install XcodeGen
         run: brew install xcodegen
-      - name: Generate Xcode project
+      - name: Generate project
         run: xcodegen generate
-      - name: Build for iOS Simulator
+      - name: Build for Simulator
         run: |
           xcodebuild \
             -project ClassScheduleNotifier.xcodeproj \
@@ -26,3 +24,105 @@ jobs:
             -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO \
             build
+
+  build-ipa:
+    name: Build IPA
+    runs-on: macos-15
+    if: ${{ github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate project
+        run: xcodegen generate
+
+      - name: Import Certificate
+        env:
+          P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          if [ -z "$P12_BASE64" ]; then
+            echo "缺少签名证书 Secret，跳过 IPA 构建"
+            exit 0
+          fi
+          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          echo -n "$P12_BASE64" | base64 --decode -o $CERTIFICATE_PATH
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security import $CERTIFICATE_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+      - name: Install Provisioning Profile
+        env:
+          PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+          WIDGET_PROFILE_BASE64: ${{ secrets.IOS_WIDGET_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          if [ -z "$PROFILE_BASE64" ]; then
+            echo "缺少描述文件 Secret"
+            exit 0
+          fi
+          PP_PATH=$RUNNER_TEMP/profile.mobileprovision
+          echo -n "$PROFILE_BASE64" | base64 --decode -o $PP_PATH
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          UUID=$(/usr/libexec/PlistBuddy -c 'Print :UUID' /dev/stdin <<< $(security cms -D -i $PP_PATH))
+          cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles/$UUID.mobileprovision
+          if [ -n "$WIDGET_PROFILE_BASE64" ]; then
+            W_PP=$RUNNER_TEMP/widget.mobileprovision
+            echo -n "$WIDGET_PROFILE_BASE64" | base64 --decode -o $W_PP
+            W_UUID=$(/usr/libexec/PlistBuddy -c 'Print :UUID' /dev/stdin <<< $(security cms -D -i $W_PP))
+            cp $W_PP ~/Library/MobileDevice/Provisioning\ Profiles/$W_UUID.mobileprovision
+          fi
+
+      - name: Archive & Export IPA
+        if: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 != '' }}
+        env:
+          TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          PROFILE_NAME: ${{ secrets.IOS_PROFILE_NAME }}
+          WIDGET_PROFILE_NAME: ${{ secrets.IOS_WIDGET_PROFILE_NAME }}
+        run: |
+          # 替换 ExportOptions 中的占位符
+          sed -i '' "s/\$(TEAM_ID)/$TEAM_ID/g" ExportOptions.plist
+          sed -i '' "s/\$(PROFILE_NAME)/$PROFILE_NAME/g" ExportOptions.plist
+          sed -i '' "s/\$(WIDGET_PROFILE_NAME)/$WIDGET_PROFILE_NAME/g" ExportOptions.plist
+
+          xcodebuild \
+            -project ClassScheduleNotifier.xcodeproj \
+            -scheme ClassScheduleNotifier \
+            -configuration Release \
+            -archivePath $RUNNER_TEMP/ClassScheduleNotifier.xcarchive \
+            -destination 'generic/platform=iOS' \
+            DEVELOPMENT_TEAM=$TEAM_ID \
+            CODE_SIGN_STYLE=Manual \
+            archive
+
+          xcodebuild \
+            -exportArchive \
+            -archivePath $RUNNER_TEMP/ClassScheduleNotifier.xcarchive \
+            -exportOptionsPlist ExportOptions.plist \
+            -exportPath $RUNNER_TEMP/ipa
+
+          ls -la $RUNNER_TEMP/ipa/
+
+      - name: Upload IPA Artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClassScheduleNotifier-IPA
+          path: ${{ runner.temp }}/ipa/*.ipa
+
+      - name: Create Release
+        if: success() && github.event_name == 'workflow_dispatch'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: 课程提醒 v${{ github.run_number }}
+          files: ${{ runner.temp }}/ipa/*.ipa
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
