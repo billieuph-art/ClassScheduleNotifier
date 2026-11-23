@@ -1,49 +1,44 @@
 import SwiftUI
 
-public struct ContentView: View {
-    @EnvironmentObject private var scheduleStore: ScheduleStore
-    @EnvironmentObject private var notificationScheduler: NotificationScheduler
+struct CourseRow: View {
+    let course: Course
 
-    public var body: some View {
-        NavigationStack {
-            List {
-                Section("今天的课程") {
-                    ForEach(todayCourses, id: \ .id) { course in
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text(course.name)
-                                .font(.headline)
-                            Text(course.timeRangeText)
-                                .font(.subheadline)
-                            Text("\(course.location) · \(course.teacher)")
-                                .font(.caption)
-                        }
-                        .padding(.vertical, 6)
+    var body: some View {
+        HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: 3)
+                .fill(Color(hex: course.colorHex))
+                .frame(width: 4)
+            VStack(alignment: .leading, spacing: 5) {
+                Text(course.name)
+                    .font(.headline)
+                Text(course.timeRangeText)
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    if !course.location.isEmpty {
+                        Label(course.location, systemImage: "mappin.and.ellipse")
+                    }
+                    if !course.teacher.isEmpty {
+                        Label(course.teacher, systemImage: "person")
                     }
                 }
-
-                Section("操作") {
-                    Button("导入 CSV / ICS") {
-                        let csvSample = "name,teacher,location,weekday,start,end,notes\n高等数学,李老师,A101,1,08:30,10:00,第一节课\n"
-                        _ = ImportService.parseCSV(csvSample)
-                    }
-
-                    Button("重新生成通知") {
-                        notificationScheduler.scheduleAll(for: scheduleStore.courses)
-                    }
-                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
             }
-            .navigationTitle("课程提醒")
+            Spacer(minLength: 0)
         }
-    }
-
-    private var todayCourses: [Course] {
-        let today = Calendar.current.component(.weekday, from: Date())
-        return scheduleStore.courses.filter { $0.weekday.rawValue == today }
+        .padding(.vertical, 5)
     }
 }
 
-#Preview {
-    ContentView()
-        .environmentObject(ScheduleStore())
-        .environmentObject(NotificationScheduler())
+private extension Color {
+    init(hex: String) {
+        let value = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
+        let number = UInt64(value, radix: 16) ?? 0x5B8DEF
+        self.init(
+            red: Double((number >> 16) & 0xFF) / 255,
+            green: Double((number >> 8) & 0xFF) / 255,
+            blue: Double(number & 0xFF) / 255
+        )
+    }
 }
