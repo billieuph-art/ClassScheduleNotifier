@@ -1,108 +1,58 @@
 import Foundation
+import UserNotifications
 
-public enum ImportService {
-    public static func parseCSV(_ csvText: String) -> [Course] {
-        let lines = csvText.components(separatedBy: .newlines).filter { !$0.isEmpty }
-        guard lines.count > 1 else { return [] }
+@MainActor
+final class NotificationScheduler: ObservableObject {
+    @Published private(set) var authorizationGranted = false
+    private let center = UNUserNotificationCenter.current()
+    private let leadTime: TimeInterval = 20 * 60
 
-        var courses: [Course] = []
-        let header = lines[0].components(separatedBy: ",")
-
-        for row in lines.dropFirst() {
-            let values = row.components(separatedBy: ",")
-            guard values.count >= 6 else { continue }
-
-            let dictionary = Dictionary(uniqueKeysWithValues: zip(header, values))
-            guard let name = dictionary["name"],
-                  let location = dictionary["location"],
-                  let weekdayRaw = dictionary["weekday"],
-                  let weekday = Weekday(rawValue: Int(weekdayRaw) ?? 1),
-                  let startText = dictionary["start"],
-                  let endText = dictionary["end"] else { continue }
-
-            let formatter = DateFormatter()
-            formatter.dateFormat = "HH:mm"
-            let start = formatter.date(from: startText) ?? Date()
-            let end = formatter.date(from: endText) ?? Date()
-
-            let baseDate = Date()
-            let calendar = Calendar(identifier: .gregorian)
-            let startComponents = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: baseDate)
-            var targetComponents = DateComponents(year: startComponents.year, month: startComponents.month, day: startComponents.day, hour: calendar.component(.hour, from: start), minute: calendar.component(.minute, from: start))
-            targetComponents.weekday = weekday.rawValue
-            targetComponents.second = 0
-
-            let mappedStartDate = calendar.date(from: targetComponents) ?? baseDate
-            let mappedEndDate = mappedStartDate.addingTimeInterval(max(end.timeIntervalSince(start), 60 * 30))
-
-            let course = Course(
-                name: name,
-                teacher: dictionary["teacher"] ?? "",
-                location: location,
-                weekday: weekday,
-                startTime: mappedStartDate,
-                endTime: mappedEndDate,
-                notes: dictionary["notes"] ?? ""
-            )
-            courses.append(course)
+    func requestAuthorization() async {
+        do {
+            authorizationGranted = try await center.requestAuthorization(options: [.alert, .sound, .badge])
+        } catch {
+            authorizationGranted = false
+            print("通知授权失败：\(error)")
         }
-
-        return courses
     }
 
-    public static func parseICS(_ icsText: String) -> [Course] {
-        var courses: [Course] = []
-        let lines = icsText.components(separatedBy: .newlines)
+    func scheduleAll(for courses: [Course]) async {
+        center.removeAllPendingNotificationRequests()
+        guard authorizationGranted else { return }
 
-        var current: [String: String] = [:]
-        for line in lines {
-            if line.hasPrefix("BEGIN:VEVENT") {
-                current.removeAll(keepingCapacity: true)
-            } else if line.hasPrefix("END:VEVENT") {
-                if let summary = current["SUMMARY"],
-                   let start = current["DTSTART"],
-                   let end = current["DTEND"],
-                   let location = current["LOCATION"] {
-                    let startDate = parseICSDate(start)
-                    let endDate = parseICSDate(end)
-                    let weekday = weekdayFromDate(startDate)
-                    let course = Course(name: summary, teacher: "", location: location, weekday: weekday, startTime: startDate, endTime: endDate)
-                    courses.append(course)
-                }
-            } else {
-                let parts = line.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
-                guard parts.count == 2 else { continue }
-                let key = String(parts[0])
-                let value = String(parts[1])
-                current[key] = value
-            }
+        // 每门课按星期重复提醒。系统待处理通知数量有限，避免超过 64 条。
+        for course in courses.prefix(64) {
+            schedule(course)
         }
-
-        return courses
     }
 
-    private static func parseICSDate(_ raw: String) -> Date {
-        let trimmed = raw.replacingOccurrences(of: "T", with: "")
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        formatter.dateFormat = "yyyyMMddHHmmssZ"
+    func schedule(_ course: Course) {
+        guard authorizationGranted else { return }
+        let reminderDate = course.startTime.addingTimeInterval(-leadTime)
+        let components = Calendar.current.dateComponents([.hour, .minute], from: reminderDate)
+        var triggerComponents = DateComponents()
+        // Calendar weekday: Sunday = 1; app Weekday: Monday = 1.
+        triggerComponents.weekday = course.weekday == .sunday ? 1 : course.weekday.rawValue + 1
+        triggerComponents.hour = components.hour
+        triggerComponents.minute = components.minute
 
-        if let parsed = formatter.date(from: trimmed + "Z") {
-            return parsed
+        let content = UNMutableNotificationContent()
+        content.title = "课程即将开始"
+        content.body = "\(course.name) 将在 20 分钟后开始\(course.location.isEmpty ? "" : "，地点：\(course.location)")。"
+        content.sound = .default
+
+        let trigger = UNCalendarNotificationTrigger(dateMatching: triggerComponents, repeats: true)
+        let request = UNNotificationRequest(
+            identifier: "course-reminder-\(course.id.uuidString)",
+            content: content,
+            trigger: trigger
+        )
+        center.add(request) { error in
+            if let error { print("添加课程提醒失败：\(error)") }
         }
-
-        formatter.dateFormat = "yyyyMMdd"
-        if let parsed = formatter.date(from: trimmed) {
-            return parsed
-        }
-
-        return Date()
     }
 
-    private static func weekdayFromDate(_ date: Date) -> Weekday {
-        let calendar = Calendar(identifier: .gregorian)
-        let value = calendar.component(.weekday, from: date)
-        return Weekday(rawValue: value) ?? .monday
+    func cancelAll() {
+        center.removeAllPendingNotificationRequests()
     }
 }
