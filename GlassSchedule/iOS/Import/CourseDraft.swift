@@ -46,7 +46,15 @@ struct CourseDraft: Identifiable, Hashable {
         }
     }
 
-    var isValid: Bool { !name.isEmpty && endMinutes > startMinutes }
+    var isValid: Bool {
+        let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard cleaned.count >= 2, endMinutes > startMinutes else { return false }
+        let junk = ["上午", "下午", "晚上", "备注", "课程", "教室", "教师", "时间", "节次", "地点"]
+        if junk.contains(cleaned) { return false }
+        if cleaned.hasPrefix("周") && cleaned.count <= 3 { return false }
+        if cleaned.hasPrefix("星期") && cleaned.count <= 4 { return false }
+        return true
+    }
 
     func makeCourse(major: String) -> Course {
         Course(name: name, classroom: classroom, teacher: teacher, major: major, weekday: weekday,

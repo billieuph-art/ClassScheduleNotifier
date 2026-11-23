@@ -21,9 +21,67 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
         center.setNotificationCategories([category])
     }
 
+    enum PermissionOutcome: Equatable {
+        case granted
+        case deniedNeedsSettings
+        case provisional
+        case failed(String)
+
+        var message: String {
+            switch self {
+            case .granted: return "通知权限已开启，上课前提醒会生效。"
+            case .deniedNeedsSettings: return "通知权限此前被关闭。请在系统设置里打开「允许通知」。"
+            case .provisional: return "已开启安静通知（临时授权）。"
+            case .failed(let detail): return "请求失败：\(detail)"
+            }
+        }
+
+        var shouldOpenSettings: Bool {
+            if case .deniedNeedsSettings = self { return true }
+            return false
+        }
+    }
+
+    var authorizationStatusText: String {
+        get async {
+            switch await center.notificationSettings().authorizationStatus {
+            case .authorized: return "已开启"
+            case .provisional: return "安静通知"
+            case .ephemeral: return "临时授权"
+            case .denied: return "已关闭（需去系统设置开启）"
+            case .notDetermined: return "尚未请求"
+            @unknown default: return "未知"
+            }
+        }
+    }
+
     @discardableResult
     func requestAuthorization() async -> Bool {
-        (try? await center.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
+        let outcome = await ensurePermission()
+        return outcome == .granted || outcome == .provisional
+    }
+
+    /// 尚未决定时弹出系统授权框；已被拒绝时返回需跳转设置，避免“点了没反应”。
+    @discardableResult
+    func ensurePermission() async -> PermissionOutcome {
+        let status = await center.notificationSettings().authorizationStatus
+        switch status {
+        case .authorized:
+            return .granted
+        case .provisional, .ephemeral:
+            return .provisional
+        case .denied:
+            return .deniedNeedsSettings
+        case .notDetermined:
+            do {
+                let granted = try await center.requestAuthorization(options: [.alert, .sound, .badge])
+                return granted ? .granted : .deniedNeedsSettings
+            } catch {
+                return .failed(error.localizedDescription)
+            }
+        @unknown default:
+            return .failed("未知的授权状态")
+        }
     }
 
     /// iOS 最多保留 64 条待发通知，这里只排未来 7 天内的前 60 节课，每次打开 App 或后台刷新时滚动更新。
@@ -65,24 +123,25 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
                                             willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
         if notification.request.content.categoryIdentifier == Self.categoryID {
-            await MainActor.run { self.startActivity(from: notification.request.content.userInfo) }
+            await startActivity(from: notification.request.content.userInfo)
         }
         return [.banner, .list, .sound]
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
                                             didReceive response: UNNotificationResponse) async {
-        let info = response.notification.request.content.userInfo
-        await MainActor.run { self.startActivity(from: info) }
+        await startActivity(from: response.notification.request.content.userInfo)
     }
 
-    private func startActivity(from userInfo: [AnyHashable: Any]) {
-        guard let idString = userInfo["courseID"] as? String, let id = UUID(uuidString: idString),
-              let course = DataStore.shared.course(id: id)?.snapshot,
-              let startTS = userInfo["start"] as? TimeInterval else { return }
-        let start = Date(timeIntervalSince1970: startTS)
-        let end = start.addingTimeInterval(TimeInterval((course.endMinutes - course.startMinutes) * 60))
-        let week = SemesterCalendar.weekNumber(of: start, semesterStart: SharedSettings.semesterStart)
-        LiveActivityManager.shared.start(ClassOccurrence(course: course, start: start, end: end, week: week))
+    private nonisolated func startActivity(from userInfo: [AnyHashable: Any]) async {
+        await MainActor.run {
+            guard let idString = userInfo["courseID"] as? String, let id = UUID(uuidString: idString),
+                  let course = DataStore.shared.course(id: id)?.snapshot,
+                  let startTS = userInfo["start"] as? TimeInterval else { return }
+            let start = Date(timeIntervalSince1970: startTS)
+            let end = start.addingTimeInterval(TimeInterval((course.endMinutes - course.startMinutes) * 60))
+            let week = SemesterCalendar.weekNumber(of: start, semesterStart: SharedSettings.semesterStart)
+            Task { _ = await LiveActivityManager.shared.start(ClassOccurrence(course: course, start: start, end: end, week: week)) }
+        }
     }
 }

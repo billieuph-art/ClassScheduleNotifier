@@ -8,12 +8,8 @@ struct StartNextClassActivityIntent: LiveActivityIntent {
 
     @MainActor
     func perform() async throws -> some IntentResult & ProvidesDialog {
-        let courses = DataStore.shared.snapshots()
-        guard let next = ScheduleQuery.current(courses: courses, semesterStart: SharedSettings.semesterStart, horizon: 86_400) else {
-            return .result(dialog: "接下来 24 小时内没有课")
-        }
-        LiveActivityManager.shared.start(next)
-        return .result(dialog: "已开始：\(next.course.name)，\(next.course.classroom)")
+        let result = await LiveActivityManager.shared.startNext(courses: DataStore.shared.snapshots())
+        return .result(dialog: "\(result.message)")
     }
 }
 

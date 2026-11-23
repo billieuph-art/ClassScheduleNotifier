@@ -56,7 +56,7 @@ final class AppCoordinator {
         await NotificationScheduler.shared.reschedule(courses: courses)
         LiveActivityManager.shared.cleanupEnded()
         if SharedSettings.autoLiveActivity {
-            LiveActivityManager.shared.startIfUpcoming(courses: courses)
+            _ = await LiveActivityManager.shared.startIfUpcoming(courses: courses)
         }
         if classifyPhotos {
             await PhotoClassifier.shared.classifyRecent(days: 14, requestAccessIfNeeded: false)

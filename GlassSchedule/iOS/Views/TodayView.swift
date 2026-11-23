@@ -82,6 +82,8 @@ struct TodayView: View {
 struct NextClassHero: View {
     let occurrence: ClassOccurrence
     let now: Date
+    @State private var activityMessage: String?
+    @State private var starting = false
 
     var body: some View {
         let course = occurrence.course
@@ -111,14 +113,25 @@ struct NextClassHero: View {
             if ongoing {
                 ProgressView(timerInterval: occurrence.start...occurrence.end, countsDown: false) { EmptyView() } currentValueLabel: { EmptyView() }
                     .tint(Color(hex: course.colorHex))
-            } else {
-                Button("在灵动岛显示倒计时", systemImage: "timer") {
-                    LiveActivityManager.shared.start(occurrence)
-                }
-                .buttonStyle(.glass)
             }
+
+            Button(starting ? "开启中…" : "在灵动岛显示倒计时", systemImage: "timer") {
+                starting = true
+                Task {
+                    let result = await LiveActivityManager.shared.start(occurrence)
+                    activityMessage = result.message
+                    starting = false
+                }
+            }
+            .buttonStyle(.glass)
+            .disabled(starting)
         }
         .padding(20)
         .glassEffect(.regular.tint(Color(hex: course.colorHex).opacity(0.3)).interactive(), in: .rect(cornerRadius: 28))
+        .alert("实时活动", isPresented: Binding(get: { activityMessage != nil }, set: { if !$0 { activityMessage = nil } })) {
+            Button("好", role: .cancel) {}
+        } message: {
+            Text(activityMessage ?? "")
+        }
     }
 }

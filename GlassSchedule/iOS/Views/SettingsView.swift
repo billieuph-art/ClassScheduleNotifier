@@ -16,6 +16,10 @@ struct SettingsView: View {
     @AppStorage(SharedSettings.Key.showWeekend, store: SharedSettings.defaults) private var showWeekend = false
 
     @State private var confirmClear = false
+    @State private var notificationStatus = "检查中…"
+    @State private var permissionAlert: String?
+    @State private var openSettingsAfterAlert = false
+    @State private var liveActivityAlert: String?
 
     private var semesterStart: Binding<Date> {
         Binding(get: { Date(timeIntervalSinceReferenceDate: semesterStartRaw) },
@@ -33,12 +37,22 @@ struct SettingsView: View {
 
                 Section {
                     Stepper("上课前 \(reminderMinutes) 分钟提醒", value: $reminderMinutes, in: 5...120, step: 5)
+                    LabeledContent("通知权限", value: notificationStatus)
+                    Button("开启通知权限") {
+                        Task { await handleNotificationPermission() }
+                    }
                     Toggle("自动开启实时活动", isOn: $autoLiveActivity)
-                    Button("开启通知权限") { Task { await NotificationScheduler.shared.requestAuthorization(); await refresh() } }
+                    LabeledContent("实时活动", value: LiveActivityManager.shared.statusText)
+                    Button("立即开启下一节课实时活动") {
+                        Task {
+                            let result = await LiveActivityManager.shared.startNext(courses: DataStore.shared.snapshots())
+                            liveActivityAlert = result.message
+                        }
+                    }
                 } header: {
                     Text("提醒与实时活动")
                 } footer: {
-                    Text("提醒到达时点按“在灵动岛显示倒计时”即可开启实时活动；也可在“快捷指令”中创建自动化运行“开始下一节课的实时活动”，做到完全自动。")
+                    Text("若点「开启通知权限」没有弹窗，多半是以前拒绝过，需要去系统设置里重新打开。实时活动依赖小组件扩展，侧载时请保留 Widget。")
                 }
 
                 Section {
@@ -58,7 +72,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Apple 智能")
                 } footer: {
-                    Text("课表识别和照片摘要都由端侧模型完成，数据不会离开你的设备。")
+                    Text("课表识别会同时使用 Apple 智能与本地规则，互相补全课程名、教室、教师、节次和周次。")
                 }
 
                 Section {
@@ -72,6 +86,7 @@ struct SettingsView: View {
             .scrollContentBackground(.hidden)
             .background(GlassBackground())
             .navigationTitle("设置")
+            .task { await refreshNotificationStatus() }
             .onChange(of: reminderMinutes) { _, _ in Task { await refresh() } }
             .onChange(of: semesterStartRaw) { _, _ in Task { await refresh() } }
             .confirmationDialog("确定清空全部 \(courses.count) 门课程？", isPresented: $confirmClear, titleVisibility: .visible) {
@@ -81,11 +96,46 @@ struct SettingsView: View {
                     Task { await refresh() }
                 }
             }
+            .alert("通知权限", isPresented: Binding(get: { permissionAlert != nil }, set: { if !$0 { permissionAlert = nil } })) {
+                if openSettingsAfterAlert {
+                    Button("去设置") { openSystemSettings() }
+                    Button("取消", role: .cancel) {}
+                } else {
+                    Button("好", role: .cancel) {}
+                }
+            } message: {
+                Text(permissionAlert ?? "")
+            }
+            .alert("实时活动", isPresented: Binding(get: { liveActivityAlert != nil }, set: { if !$0 { liveActivityAlert = nil } })) {
+                Button("好", role: .cancel) {}
+            } message: {
+                Text(liveActivityAlert ?? "")
+            }
         }
     }
 
     private func refresh() async {
         await AppCoordinator.shared.refreshAll()
+        await refreshNotificationStatus()
+    }
+
+    private func refreshNotificationStatus() async {
+        notificationStatus = await NotificationScheduler.shared.authorizationStatusText
+    }
+
+    private func handleNotificationPermission() async {
+        let outcome = await NotificationScheduler.shared.ensurePermission()
+        openSettingsAfterAlert = outcome.shouldOpenSettings
+        permissionAlert = outcome.message
+        await refreshNotificationStatus()
+        if outcome == .granted || outcome == .provisional {
+            await AppCoordinator.shared.refreshAll()
+        }
+    }
+
+    private func openSystemSettings() {
+        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
+        UIApplication.shared.open(url)
     }
 }
 

@@ -98,7 +98,10 @@ enum TextExtractor {
             let box = observation.boundingBox.cgRect
             // Vision 的原点在左下角，转换为左上角便于按行排序。
             let rect = CGRect(x: box.minX, y: 1 - box.maxY, width: box.width, height: box.height)
-            return TextItem(text: candidate.string, rect: rect, page: page)
+            let text = candidate.string
+                .replacingOccurrences(of: "：", with: ":")
+                .applyingTransform(.fullwidthToHalfwidth, reverse: false) ?? candidate.string
+            return TextItem(text: text, rect: rect, page: page)
         }
     }
 

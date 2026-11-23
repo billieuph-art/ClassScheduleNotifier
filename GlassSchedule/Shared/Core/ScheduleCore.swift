@@ -62,15 +62,21 @@ enum WeekdayName {
     static func full(_ weekday: Int) -> String { "周" + short(weekday) }
 
     /// 从文本中识别星期：周一 / 星期一 / 礼拜一 / Mon / Monday。
-    static func detect(in text: String) -> Int? {
-        let lowered = text.lowercased()
+    /// `allowBare` 用于表格表头，允许单独的「一」「二」…「日」。
+    static func detect(in text: String, allowBare: Bool = false) -> Int? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowered = trimmed.lowercased()
         for (i, n) in names.enumerated() {
-            for prefix in ["周", "星期", "礼拜"] where text.contains(prefix + n) { return i + 1 }
+            for prefix in ["周", "星期", "礼拜"] where trimmed.contains(prefix + n) { return i + 1 }
         }
-        if text.contains("周天") || text.contains("星期天") { return 7 }
+        if trimmed.contains("周天") || trimmed.contains("星期天") { return 7 }
         let english = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
         for (i, e) in english.enumerated() where lowered.range(of: "\\b\(e)", options: .regularExpression) != nil {
             return i + 1
+        }
+        if allowBare {
+            if trimmed == "天" { return 7 }
+            if let index = names.firstIndex(of: trimmed) { return index + 1 }
         }
         return nil
     }
