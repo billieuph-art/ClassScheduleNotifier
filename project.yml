@@ -13,6 +13,8 @@ targets:
     platform: iOS
     sources:
       - path: ClassScheduleNotifier
+    dependencies:
+      - target: ClassScheduleNotifierWidget
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.billieuphart.ClassScheduleNotifier
@@ -22,3 +24,21 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         SWIFT_EMIT_LOC_STRINGS: YES
         CODE_SIGN_STYLE: Automatic
+
+  ClassScheduleNotifierWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ClassScheduleNotifierWidget
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.billieuphart.ClassScheduleNotifier.Widget
+        PRODUCT_NAME: ClassScheduleNotifierWidget
+        INFOPLIST_KEY_NSSupportsLiveActivities: YES
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_EMIT_LOC_STRINGS: YES
+        CODE_SIGN_STYLE: Automatic
+        SKIP_INSTALL: YES
+    dependencies:
+      - sdk: WidgetKit.framework
+      - sdk: SwiftUI.framework
