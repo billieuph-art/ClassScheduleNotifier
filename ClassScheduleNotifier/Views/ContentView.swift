@@ -1,12 +1,16 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import PhotosUI
 
 struct ContentView: View {
     @EnvironmentObject private var store: ScheduleStore
     @EnvironmentObject private var notifications: NotificationScheduler
     @State private var showingEditor = false
     @State private var showingImporter = false
+    @State private var showingSettings = false
+    @State private var selectedPhoto: PhotosPickerItem?
     @State private var importError: String?
+    @State private var isImporting = false
 
     private var todayCourses: [Course] {
         let weekday = Calendar.current.component(.weekday, from: Date())
@@ -23,7 +27,7 @@ struct ContentView: View {
                     ContentUnavailableView(
                         "今天没有课程",
                         systemImage: "calendar",
-                        description: Text("可以手动添加课程，或导入学校课表。")
+                        description: Text("可以手动添加课程，或导入学校课表截图。")
                     )
                 } else {
                     List {
@@ -47,6 +51,9 @@ struct ContentView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     Menu {
                         Button("导入 CSV 文件", systemImage: "doc.text") { showingImporter = true }
+                        PhotosPicker(selection: $selectedPhoto, matching: .images) {
+                            Label("导入课表截图", systemImage: "photo")
+                        }
                         Button("重新生成提醒", systemImage: "bell.badge") {
                             Task { await notifications.scheduleAll(for: store.courses) }
                         }
@@ -55,10 +62,17 @@ struct ContentView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button { showingEditor = true } label: {
-                        Image(systemName: "plus")
+                    HStack {
+                        Button { showingSettings = true } label: {
+                            Image(systemName: "gear")
+                        }
+                        .accessibilityLabel("设置")
+
+                        Button { showingEditor = true } label: {
+                            Image(systemName: "plus")
+                        }
+                        .accessibilityLabel("添加课程")
                     }
-                    .accessibilityLabel("添加课程")
                 }
             }
             .sheet(isPresented: $showingEditor) {
@@ -67,27 +81,19 @@ struct ContentView: View {
                     Task { await notifications.scheduleAll(for: store.courses) }
                 }
             }
+            .sheet(isPresented: $showingSettings) {
+                SettingsView()
+                    .environmentObject(notifications)
+            }
             .fileImporter(
                 isPresented: $showingImporter,
                 allowedContentTypes: [.commaSeparatedText, .plainText],
                 allowsMultipleSelection: false
             ) { result in
-                do {
-                    guard let url = try result.get().first else { return }
-                    let accessed = url.startAccessingSecurityScopedResource()
-                    defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-                    let text = try String(contentsOf: url, encoding: .utf8)
-                    let imported = try ImportService.parseCSV(text)
-                    guard !imported.isEmpty else {
-                        importError = "没有识别到课程。请检查 CSV 表头和内容。"
-                        return
-                    }
-                    store.courses.append(contentsOf: imported)
-                    store.save()
-                    Task { await notifications.scheduleAll(for: store.courses) }
-                } catch {
-                    importError = error.localizedDescription
-                }
+                Task { await handleFileImport(result) }
+            }
+            .onChange(of: selectedPhoto) { _, newItem in
+                Task { await handlePhotoImport(newItem) }
             }
             .alert("导入失败", isPresented: Binding(
                 get: { importError != nil },
@@ -97,10 +103,65 @@ struct ContentView: View {
             } message: {
                 Text(importError ?? "")
             }
+            .overlay {
+                if isImporting {
+                    ProgressView("正在识别课表...")
+                        .padding()
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(12)
+                }
+            }
             .task {
-                await notifications.requestAuthorization()
+                await notifications.refreshStatus()
+                if notifications.authorizationStatus == .notDetermined {
+                    await notifications.requestAuthorization()
+                }
                 await notifications.scheduleAll(for: store.courses)
             }
         }
+    }
+
+    private func handleFileImport(_ result: Result<[URL], Error>) async {
+        do {
+            guard let url = try result.get().first else { return }
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+            let text = try String(contentsOf: url, encoding: .utf8)
+            let imported = try ImportService.parseCSV(text)
+            guard !imported.isEmpty else {
+                importError = "没有识别到课程。请检查 CSV 表头和内容。"
+                return
+            }
+            store.courses.append(contentsOf: imported)
+            store.save()
+            await notifications.scheduleAll(for: store.courses)
+        } catch {
+            importError = error.localizedDescription
+        }
+    }
+
+    private func handlePhotoImport(_ item: PhotosPickerItem?) async {
+        guard let item else { return }
+        isImporting = true
+        defer { isImporting = false }
+
+        do {
+            guard let data = try await item.loadTransferable(type: Data.self),
+                  let image = UIImage(data: data) else {
+                importError = "无法读取图片"
+                return
+            }
+            let imported = try await ImportService.parseImage(image)
+            guard !imported.isEmpty else {
+                importError = "没有从截图中识别到课程。请确保图片清晰，并包含课程名、时间、周数等信息。"
+                return
+            }
+            store.courses.append(contentsOf: imported)
+            store.save()
+            await notifications.scheduleAll(for: store.courses)
+        } catch {
+            importError = error.localizedDescription
+        }
+        selectedPhoto = nil
     }
 }
