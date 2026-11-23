@@ -31,7 +31,7 @@ struct OnboardingView: View {
                     .font(.system(size: 64))
                     .padding(28)
                     .glassEffect(.regular.interactive(), in: .circle)
-                Text("玻璃课表").font(.largeTitle.bold())
+                Text("Classio").font(.largeTitle.bold())
                 GlassEffectContainer(spacing: 12) {
                     VStack(alignment: .leading, spacing: 12) {
                         feature("doc.viewfinder", "截图或 PDF 一键导入课表", "Apple 智能自动识别课程、教室、节次")

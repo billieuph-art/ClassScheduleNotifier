@@ -13,7 +13,7 @@ enum LiveActivityStartResult: Equatable {
         switch self {
         case .started(let name): return "已开启「\(name)」的实时活动，请看锁屏或灵动岛。"
         case .alreadyRunning(let name): return "「\(name)」的实时活动已在显示。"
-        case .disabled: return "系统未允许实时活动。请到「设置 > 玻璃课表」或「设置 > 面容 ID 与密码 / 专注模式」中开启实时活动，并确认侧载时保留了小组件扩展。"
+        case .disabled: return "系统未允许实时活动。请到「设置 > Classio」或「设置 > 面容 ID 与密码 / 专注模式」中开启实时活动，并确认侧载时保留了小组件扩展。"
         case .noUpcoming: return "近期没有可显示的课程。请先导入课表，或确认上课时间正确。"
         case .ended: return "该课程已结束，无法开启实时活动。"
         case .failed(let detail): return "启动失败：\(detail)"

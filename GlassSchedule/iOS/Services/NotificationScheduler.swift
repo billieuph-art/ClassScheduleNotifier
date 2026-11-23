@@ -20,7 +20,7 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
                                          icon: UNNotificationActionIcon(systemImageName: "timer"))
         let category = UNNotificationCategory(identifier: Self.categoryID, actions: [start], intentIdentifiers: [])
         center.setNotificationCategories([category])
-        // 让系统在「设置 › 玻璃课表」里出现通知入口（侧载尤其需要先登记一次）
+        // 让系统在「设置 › Classio」里出现通知入口（侧载尤其需要先登记一次）
         UIApplication.shared.registerForRemoteNotifications()
     }
 
@@ -40,14 +40,14 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
 
                 请按下面做：
                 1. 点「打开本 App 设置页」
-                2. 在「设置」主页滑到最底部，点「玻璃课表」
+                2. 在「设置」主页滑到最底部，点「Classio」
                 3. 打开「通知 › 允许通知」
                 4. 回到 App 发送测试通知
                 """
             case .provisional:
-                return "已开启安静通知（不弹横幅）。如需横幅，请到「玻璃课表 › 通知」改成横幅提醒。"
+                return "已开启安静通知（不弹横幅）。如需横幅，请到「Classio › 通知」改成横幅提醒。"
             case .failed(let detail):
-                return "请求失败：\(detail)\n\n请打开「设置」最底部的「玻璃课表 › 通知」手动允许。"
+                return "请求失败：\(detail)\n\n请打开「设置」最底部的「Classio › 通知」手动允许。"
             }
         }
 
@@ -144,7 +144,7 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    /// 打开「设置 › 玻璃课表」本 App 页（侧载时通知开关通常在这里，而不是通知总列表）。
+    /// 打开「设置 › Classio」本 App 页（侧载时通知开关通常在这里，而不是通知总列表）。
     func openAppSettings() {
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         UIApplication.shared.open(url)
@@ -203,10 +203,10 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
     func scheduleTestNotification() async -> String {
         let settings = await center.notificationSettings()
         guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
-            return "还没有通知权限。请点「打开本 App 设置页」，在设置最底部的「玻璃课表 › 通知」里打开允许通知。"
+            return "还没有通知权限。请点「打开本 App 设置页」，在设置最底部的「Classio › 通知」里打开允许通知。"
         }
         let content = UNMutableNotificationContent()
-        content.title = "玻璃课表"
+        content.title = "Classio"
         content.body = "通知已接通。上课前会按你设置的时间提醒。"
         content.sound = .default
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 5, repeats: false)

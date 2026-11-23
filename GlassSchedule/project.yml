@@ -11,8 +11,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "1.0.7"
-    CURRENT_PROJECT_VERSION: "7"
+    MARKETING_VERSION: "1.0.8"
+    CURRENT_PROJECT_VERSION: "8"
     DEVELOPMENT_TEAM: ""
     CODE_SIGN_STYLE: Automatic
     ENABLE_USER_SCRIPT_SANDBOXING: YES
@@ -30,7 +30,7 @@ targets:
     info:
       path: iOS/Info.plist
       properties:
-        CFBundleDisplayName: 玻璃课表
+        CFBundleDisplayName: Classio
         CFBundleDevelopmentRegion: zh-Hans
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
@@ -42,8 +42,8 @@ targets:
           UIApplicationSupportsMultipleScenes: false
         NSSupportsLiveActivities: true
         NSSupportsLiveActivitiesFrequentUpdates: true
-        NSPhotoLibraryUsageDescription: 玻璃课表需要读取照片，按拍摄时间把上课期间拍的板书、PPT 照片归类到对应课程的复习资料中。
-        NSPhotoLibraryAddUsageDescription: 玻璃课表会在“照片”中按专业创建文件夹、按课程创建“复习资料”相簿。
+        NSPhotoLibraryUsageDescription: Classio 需要读取照片，按拍摄时间把上课期间拍的板书、PPT 照片归类到对应课程的复习资料中。
+        NSPhotoLibraryAddUsageDescription: Classio 会在“照片”中按专业创建文件夹、按课程创建“复习资料”相簿。
         UIBackgroundModes: [fetch, processing]
         BGTaskSchedulerPermittedIdentifiers:
           - com.billieuphart.glassschedule.refresh
@@ -71,7 +71,7 @@ targets:
     info:
       path: Widgets/Info.plist
       properties:
-        CFBundleDisplayName: 玻璃课表小组件
+        CFBundleDisplayName: Classio
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         NSExtension:

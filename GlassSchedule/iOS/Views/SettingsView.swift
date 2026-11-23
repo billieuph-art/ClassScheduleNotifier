@@ -65,7 +65,7 @@ struct SettingsView: View {
                 } header: {
                     Text("提醒与实时活动")
                 } footer: {
-                    Text("侧载常见：系统不弹授权框，且「设置 › 通知」列表里暂时找不到本 App。请先点「开启 / 重新检查」，再点「打开本 App 设置页」——在设置主页滑到最底部找到「玻璃课表」，打开里面的「通知」。Sideloadly 安装时不要用 Live Container，并保留 Widget 扩展。")
+                    Text("侧载常见：系统不弹授权框，且「设置 › 通知」列表里暂时找不到本 App。请先点「开启 / 重新检查」，再点「打开本 App 设置页」——在设置主页滑到最底部找到「Classio」，打开里面的「通知」。Sideloadly 安装时不要用 Live Container，并保留 Widget 扩展。")
                 }
 
                 Section {
@@ -76,7 +76,7 @@ struct SettingsView: View {
                 } header: {
                     Text("复习资料")
                 } footer: {
-                    Text("照片会被加入“照片”App 中「专业」文件夹下的「课程 · 复习资料」相簿；副本保存在“文件 > 我的 iPhone > 玻璃课表 > 复习资料 > 专业 > 课程”。")
+                    Text("照片会被加入“照片”App 中「专业」文件夹下的「课程 · 复习资料」相簿；副本保存在“文件 > 我的 iPhone > Classio > 复习资料 > 专业 > 课程”。")
                 }
 
                 Section {
@@ -145,7 +145,7 @@ struct SettingsView: View {
         if outcome == .granted || outcome == .provisional {
             await AppCoordinator.shared.refreshAll()
         } else if outcome.shouldOpenSettings {
-            // 侧载时通知总列表常没有本 App，优先跳到「设置 › 玻璃课表」本页。
+            // 侧载时通知总列表常没有本 App，优先跳到「设置 › Classio」本页。
             try? await Task.sleep(for: .milliseconds(400))
             NotificationScheduler.shared.openAppSettings()
         }
