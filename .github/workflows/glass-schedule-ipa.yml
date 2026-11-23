@@ -91,15 +91,15 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: glass-schedule-sideload-${{ github.run_number }}
-          name: Classio 侧载版 IPA ${{ github.run_number }}（v1.0.8）
+          name: Classio 侧载版 IPA ${{ github.run_number }}（v1.0.9）
           target_commitish: ${{ github.sha }}
           prerelease: true
           files: GlassSchedule/GlassSchedule-sideload.ipa
           body: |
-            ## Classio 侧载专用包（v1.0.8）
-            - 应用显示名改为 **Classio**
-            - **深浅色自适应图标**：随系统外观自动切换 Light / Dark（含 Tinted）
-            - 单双周导入、分钟轴课表、本地 OCR（延续 v1.0.7）
+            ## Classio 侧载专用包（v1.0.9）
+            - **实时活动倒计时居中**；灵动岛倒计时改到 center，紧凑态短格式防裁切
+            - **多机型自适应**：课表网格/课程卡片按宽度调整密度与截断，不用整页等比缩放
+            - Classio 品牌与深浅色图标（延续 v1.0.8）
             - 需要 **iOS 26**；Sideloadly 请勿用 Live Container
 
             ### 通知（侧载）

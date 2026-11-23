@@ -89,23 +89,39 @@ struct NextClassHero: View {
         let course = occurrence.course
         let ongoing = occurrence.isOngoing(at: now)
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Label(ongoing ? "正在上课" : "下一节课", systemImage: ongoing ? "book.fill" : "clock")
-                    .font(.subheadline.weight(.semibold))
-                Spacer()
-                if ongoing {
-                    Text("距下课 \(occurrence.end, style: .timer)")
-                } else {
-                    Text(occurrence.start, style: .relative)
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    Label(ongoing ? "正在上课" : "下一节课", systemImage: ongoing ? "book.fill" : "clock")
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    heroTimer(ongoing: ongoing)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Label(ongoing ? "正在上课" : "下一节课", systemImage: ongoing ? "book.fill" : "clock")
+                        .font(.subheadline.weight(.semibold))
+                    heroTimer(ongoing: ongoing)
                 }
             }
             .font(.subheadline.monospacedDigit())
 
             Text(course.name).font(.largeTitle.bold()).lineLimit(2).minimumScaleFactor(0.7)
 
-            HStack(spacing: 16) {
-                Label(course.classroom.isEmpty ? "未设置教室" : course.classroom, systemImage: "mappin.and.ellipse")
-                Label("\(course.periodText) · \(course.timeText)", systemImage: "clock")
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 16) {
+                    Label(course.classroom.isEmpty ? "未设置教室" : course.classroom, systemImage: "mappin.and.ellipse")
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    Label("\(course.periodText) · \(course.timeText)", systemImage: "clock")
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(course.classroom.isEmpty ? "未设置教室" : course.classroom, systemImage: "mappin.and.ellipse")
+                        .lineLimit(1)
+                    Label("\(course.periodText) · \(course.timeText)", systemImage: "clock")
+                        .lineLimit(1)
+                }
             }
             .font(.callout)
             .foregroundStyle(.secondary)
@@ -132,6 +148,19 @@ struct NextClassHero: View {
             Button("好", role: .cancel) {}
         } message: {
             Text(activityMessage ?? "")
+        }
+    }
+
+    @ViewBuilder
+    private func heroTimer(ongoing: Bool) -> some View {
+        if ongoing {
+            Text("距下课 \(occurrence.end, style: .timer)")
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+        } else {
+            Text(occurrence.start, style: .relative)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
         }
     }
 }

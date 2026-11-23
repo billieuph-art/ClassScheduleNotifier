@@ -21,27 +21,54 @@ struct CourseLiveActivityWidget: Widget {
         } dynamicIsland: { context in
             let color = Color(hex: context.attributes.colorHex)
             return DynamicIsland {
+                // leading/trailing 只放极简内容，避开传感器裁切区；倒计时居中
                 DynamicIslandExpandedRegion(.leading) {
-                    Label(context.attributes.periodText, systemImage: "book.fill")
-                        .font(.caption.bold())
-                        .foregroundStyle(color)
+                    Color.clear.frame(width: 1)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    CountdownText(state: context.state)
-                        .font(.title3.monospacedDigit().bold())
-                        .multilineTextAlignment(.trailing)
+                    Color.clear.frame(width: 1)
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    Text(context.attributes.courseName).font(.headline).lineLimit(1)
+                    VStack(spacing: 2) {
+                        CountdownText(state: context.state)
+                            .font(.title2.monospacedDigit().bold())
+                            .minimumScaleFactor(0.65)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: .infinity)
+                        Text(timeRange(context.state))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 12)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(spacing: 6) {
-                        HStack {
-                            Label(context.state.classroom, systemImage: "mappin.and.ellipse")
-                            Spacer()
-                            Text(timeRange(context.state))
+                        Text(context.attributes.courseName)
+                            .font(.headline)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: .infinity)
+                        HStack(spacing: 8) {
+                            Text(context.attributes.periodText)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(color)
+                                .lineLimit(1)
+                            if !context.state.classroom.isEmpty {
+                                Label(context.state.classroom, systemImage: "mappin.and.ellipse")
+                                    .lineLimit(1)
+                                    .minimumScaleFactor(0.8)
+                            }
+                            Spacer(minLength: 0)
+                            Text(context.isStale ? "已下课" : (Date.now < context.state.start ? "即将上课" : "上课中"))
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(color)
                         }
                         .font(.caption)
+                        .foregroundStyle(.secondary)
                         ProgressView(timerInterval: context.state.start...context.state.end, countsDown: false) {
                             EmptyView()
                         } currentValueLabel: {
@@ -49,15 +76,22 @@ struct CourseLiveActivityWidget: Widget {
                         }
                         .tint(color)
                     }
+                    .padding(.horizontal, 10)
                 }
             } compactLeading: {
-                Image(systemName: "book.fill").foregroundStyle(color)
+                Image(systemName: "book.fill")
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(color)
             } compactTrailing: {
-                CountdownText(state: context.state)
-                    .font(.caption.monospacedDigit())
-                    .frame(maxWidth: 52)
+                // 紧凑态用短格式，避免「9:02:57」被灵动岛右侧裁切
+                CompactCountdownText(state: context.state)
+                    .font(.caption2.monospacedDigit().weight(.bold))
+                    .minimumScaleFactor(0.55)
+                    .lineLimit(1)
+                    .frame(minWidth: 28, maxWidth: 54, alignment: .trailing)
             } minimal: {
-                Image(systemName: "book.fill").foregroundStyle(color)
+                Image(systemName: "book.fill")
+                    .foregroundStyle(color)
             }
             .keylineTint(color)
         }
@@ -73,33 +107,62 @@ struct CourseActivityView: View {
         let color = Color(hex: context.attributes.colorHex)
         switch family {
         case .small:
-            VStack(alignment: .leading, spacing: 2) {
-                Text(context.attributes.courseName).font(.headline).lineLimit(1)
-                Text(context.state.classroom).font(.caption).lineLimit(1)
-                CountdownText(state: context.state).font(.caption.monospacedDigit()).foregroundStyle(color)
+            VStack(spacing: 4) {
+                Text(context.attributes.courseName)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .frame(maxWidth: .infinity)
+                CountdownText(state: context.state)
+                    .font(.title3.monospacedDigit().bold())
+                    .minimumScaleFactor(0.7)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+                Text(context.state.classroom)
+                    .font(.caption2)
+                    .lineLimit(1)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
             }
-            .padding(6)
+            .padding(8)
         default:
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .top) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(context.isStale ? "已下课" : (Date.now < context.state.start ? "即将上课" : "正在上课"))
-                            .font(.caption.bold())
-                            .foregroundStyle(color)
-                        Text(context.attributes.courseName).font(.title3.bold()).lineLimit(1)
-                        HStack(spacing: 10) {
-                            Label(context.state.classroom, systemImage: "mappin.and.ellipse")
-                            Label(context.attributes.periodText, systemImage: "number")
-                        }
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            // 锁屏横幅：倒计时居中，信息上下排布，避免左右分栏在小宽度上挤压
+            VStack(spacing: 10) {
+                Text(context.isStale ? "已下课" : (Date.now < context.state.start ? "即将上课" : "正在上课"))
+                    .font(.caption.bold())
+                    .foregroundStyle(color)
+                    .frame(maxWidth: .infinity)
+
+                Text(context.attributes.courseName)
+                    .font(.title3.bold())
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.7)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+
+                CountdownText(state: context.state)
+                    .font(.largeTitle.monospacedDigit().bold())
+                    .minimumScaleFactor(0.55)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+
+                Text(timeRange(context.state))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 12) {
+                        activityMeta(context)
                     }
-                    Spacer()
-                    VStack(alignment: .trailing, spacing: 2) {
-                        CountdownText(state: context.state).font(.title.monospacedDigit().bold())
-                        Text(timeRange(context.state)).font(.caption2).foregroundStyle(.secondary)
+                    VStack(spacing: 4) {
+                        activityMeta(context)
                     }
                 }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+
                 ProgressView(timerInterval: context.state.start...context.state.end, countsDown: false) {
                     EmptyView()
                 } currentValueLabel: {
@@ -107,8 +170,20 @@ struct CourseActivityView: View {
                 }
                 .tint(color)
             }
-            .padding(16)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
         }
+    }
+
+    @ViewBuilder
+    private func activityMeta(_ context: ActivityViewContext<CourseActivityAttributes>) -> some View {
+        if !context.state.classroom.isEmpty {
+            Label(context.state.classroom, systemImage: "mappin.and.ellipse")
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+        }
+        Label(context.attributes.periodText, systemImage: "number")
+            .lineLimit(1)
     }
 }
 
@@ -125,6 +200,39 @@ struct CountdownText: View {
         } else {
             Text("已下课")
         }
+    }
+}
+
+/// 紧凑灵动岛用：长倒计时显示「H:MM」，短倒计时显示「M:SS」，避免被裁切。
+struct CompactCountdownText: View {
+    let state: CourseActivityAttributes.ContentState
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let now = context.date
+            let target: Date? = {
+                if now < state.start { return state.start }
+                if now < state.end { return state.end }
+                return nil
+            }()
+            if let target {
+                let remaining = max(0, Int(target.timeIntervalSince(now)))
+                Text(compactCountdownString(remaining))
+                    .monospacedDigit()
+            } else {
+                Text("结束")
+            }
+        }
+    }
+
+    private func compactCountdownString(_ seconds: Int) -> String {
+        let h = seconds / 3600
+        let m = (seconds % 3600) / 60
+        let s = seconds % 60
+        if h > 0 {
+            return String(format: "%d:%02d", h, m)
+        }
+        return String(format: "%d:%02d", m, s)
     }
 }
 
@@ -202,15 +310,17 @@ struct NextClassWidgetView: View {
             switch family {
             case .accessoryInline:
                 Text("\(TimeFormat.string(course.startMinutes)) \(course.name) @\(course.classroom)")
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
             case .accessoryCircular:
                 VStack(spacing: 0) {
                     Image(systemName: "book.fill")
                     Text(TimeFormat.string(course.startMinutes)).font(.caption2.monospacedDigit())
                 }
             case .accessoryRectangular:
-                VStack(alignment: .leading) {
-                    Text(course.name).font(.headline).lineLimit(1)
-                    Text("\(course.classroom) · \(course.timeText)").font(.caption).lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(course.name).font(.headline).lineLimit(1).minimumScaleFactor(0.8)
+                    Text("\(course.classroom) · \(course.timeText)").font(.caption).lineLimit(1).minimumScaleFactor(0.8)
                     Text(occurrence.start, style: .relative).font(.caption2)
                 }
             default:
@@ -218,10 +328,15 @@ struct NextClassWidgetView: View {
                     Text(occurrence.isOngoing(at: entry.date) ? "正在上课" : "下一节")
                         .font(.caption.bold())
                         .foregroundStyle(Color(hex: course.colorHex))
-                    Text(course.name).font(.headline).lineLimit(2)
+                    Text(course.name).font(.headline).lineLimit(2).minimumScaleFactor(0.75)
                     Label(course.classroom.isEmpty ? "未设置教室" : course.classroom, systemImage: "mappin.and.ellipse")
                         .font(.caption)
-                    Label("\(course.periodText) \(course.timeText)", systemImage: "clock").font(.caption)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    Label("\(course.periodText) \(course.timeText)", systemImage: "clock")
+                        .font(.caption)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                     Spacer(minLength: 0)
                     if family == .systemMedium {
                         Text("今天还有 \(entry.remainingToday) 节课").font(.caption2).foregroundStyle(.secondary)

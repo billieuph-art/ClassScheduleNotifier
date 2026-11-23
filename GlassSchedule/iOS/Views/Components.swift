@@ -37,26 +37,30 @@ struct CourseCard: View {
 
     var body: some View {
         let course = occurrence.course
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             VStack(spacing: 2) {
                 Text(TimeFormat.string(course.startMinutes)).font(.headline.monospacedDigit())
                 Text(TimeFormat.string(course.endMinutes)).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
             }
-            .frame(width: 56)
+            .frame(minWidth: 48, idealWidth: 56, maxWidth: 64)
 
             Capsule().fill(Color(hex: course.colorHex)).frame(width: 4)
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(course.name).font(.headline).lineLimit(1)
-                HStack(spacing: 10) {
-                    Label(course.classroom.isEmpty ? "未设置教室" : course.classroom, systemImage: "mappin.and.ellipse")
-                    Label(course.periodText, systemImage: "number")
+                Text(course.name).font(.headline).lineLimit(2).minimumScaleFactor(0.75)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 10) {
+                        metaLabels(course)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        metaLabels(course)
+                    }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .labelStyle(.titleAndIcon)
             }
-            Spacer(minLength: 0)
+            .frame(maxWidth: .infinity, alignment: .leading)
             if occurrence.isOngoing() {
                 Text("上课中").font(.caption.bold()).padding(.horizontal, 8).padding(.vertical, 4)
                     .glassEffect(.regular.tint(.green.opacity(0.5)), in: .capsule)
@@ -65,6 +69,15 @@ struct CourseCard: View {
         .padding(14)
         .glassEffect(highlighted ? .regular.tint(Color(hex: course.colorHex).opacity(0.35)).interactive() : .regular.interactive(),
                      in: .rect(cornerRadius: 22))
+    }
+
+    @ViewBuilder
+    private func metaLabels(_ course: CourseSnapshot) -> some View {
+        Label(course.classroom.isEmpty ? "未设置教室" : course.classroom, systemImage: "mappin.and.ellipse")
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+        Label(course.periodText, systemImage: "number")
+            .lineLimit(1)
     }
 }
 
