@@ -2,6 +2,7 @@ import SwiftUI
 
 struct CourseRow: View {
     let course: Course
+    @EnvironmentObject private var liveActivity: LiveActivityController
 
     var body: some View {
         HStack(spacing: 12) {
@@ -26,6 +27,18 @@ struct CourseRow: View {
                 .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
+
+            Button {
+                Task {
+                    await liveActivity.start(for: course)
+                }
+            } label: {
+                Image(systemName: "play.circle.fill")
+                    .foregroundStyle(.blue)
+                    .font(.title2)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("开始实时活动")
         }
         .padding(.vertical, 5)
     }
