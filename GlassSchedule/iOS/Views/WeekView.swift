@@ -169,7 +169,7 @@ struct CourseBlock: View {
             if !course.classroom.isEmpty {
                 Text("@" + course.classroom).font(.system(size: 10)).lineLimit(2).foregroundStyle(.secondary)
             }
-            Text(course.timeText).font(.system(size: 9)).foregroundStyle(.secondary)
+            Text(course.snapshot.timeText).font(.system(size: 9)).foregroundStyle(.secondary)
             Spacer(minLength: 0)
         }
         .padding(5)
