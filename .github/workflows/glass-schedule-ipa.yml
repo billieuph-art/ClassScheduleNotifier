@@ -12,7 +12,8 @@ permissions:
 
 jobs:
   build-ipa:
-    runs-on: macos-26
+    # macos-26 常排队过久；macos-15 + Xcode 26 足够编 iOS 26
+    runs-on: macos-15
     defaults:
       run:
         working-directory: GlassSchedule
