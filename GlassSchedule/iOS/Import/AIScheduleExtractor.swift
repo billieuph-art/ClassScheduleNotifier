@@ -51,18 +51,18 @@ enum AIScheduleExtractor {
     }
 
     private static let instructions = """
-    你是中国大学课程表识别助手。输入是截图或 PDF 的 OCR 结果，每个文字片段带有归一化坐标 [x=… y=…]。
-    常见表格：最上一行是星期（周一…周日，或「一」「二」），最左一列是节次（1、2、1-2、第1节）或时间（08:00）。
-    同一列（x 接近）是同一天，同一行（y 接近）是同一节次。一个格子里多行通常依次是：课程名、教师、教室、周次。
-    字段规则：
-    - name：只要课程正式名称，去掉教师、教室、周次、节次。
-    - classroom：如「教三-305」「理科楼B204」「3-201」「A301」。
-    - teacher：教师姓名；没有就空字符串。
-    - weekday：1=周一 … 7=周日。
-    - startPeriod/endPeriod：节次；两节连上写成 1 和 2。
-    - startTime/endTime：若 OCR 有具体时间就填 HH:mm，否则空字符串。
-    - weeks：保留原文，如「1-16周」「1-8,10-16」「单周」。
-    只输出课表里真实存在的上课时段，不要编造。表头、日期、校名、学期名不是课程。
+    你是中国大学课程表识别助手。输入是截图 OCR，文字常被拆成碎片，并带坐标 [x=… y=…]。
+    表格：表头可能是「今天 11/23」「周二 11/24」；左侧是节数 1…14。同一列(x)同一天，同一片垂直色块同一门课。
+    超星/职教云常见格子内容：课程名@教室号，例如「水利工程造价二@2313」。OCR 可能拆成「水利工」「程造价」「二@231」「3」，必须先拼回整句再拆字段。
+    字段：
+    - name：完整课程名，不要教室、不要@、不要周次。禁止输出「程造价」这种残片，禁止把「二@121」当课名。
+    - classroom：@后面的教室号，如 2313、1216、2209、2212。
+    - teacher：没有就空字符串。
+    - weekday：1=周一…7=周日；「今天」按截图当天理解。
+    - startPeriod/endPeriod：色块覆盖的节次。上下相邻且同名同教室可合并为 1-4。
+    - startTime/endTime：没有具体钟点就留空，用节次即可。
+    - weeks：格子里没有周次就留空（不要编造 1-8,10-16）。
+    只输出真实课程，不要把表头、日期、空单元格编成课。
     """
 
     static func extract(from text: String, slots: [PeriodSlot]) async throws -> [CourseDraft] {
@@ -86,7 +86,7 @@ enum AIScheduleExtractor {
                                         startMinutes: TimeFormat.minutes(from: course.startTime) ?? 0,
                                         endMinutes: TimeFormat.minutes(from: course.endTime) ?? 0,
                                         weeks: WeeksParser.parse(course.weeks))
-                draft.complete(with: slots)
+                draft.complete(with: slots, preferPeriods: true)
                 if draft.isValid { drafts.append(draft) }
             }
         }

@@ -9,10 +9,12 @@ struct PeriodSlot: Codable, Hashable, Identifiable {
 }
 
 enum PeriodTable {
+    /// 默认作息含 14 节，兼容多数高职/本科「节数」列到 14 的课表。
     static let defaultSlots: [PeriodSlot] = [
         ("08:00", "08:45"), ("08:55", "09:40"), ("10:00", "10:45"), ("10:55", "11:40"),
         ("14:00", "14:45"), ("14:55", "15:40"), ("16:00", "16:45"), ("16:55", "17:40"),
         ("19:00", "19:45"), ("19:55", "20:40"), ("20:50", "21:35"), ("21:45", "22:30"),
+        ("22:40", "23:25"), ("23:30", "23:59"),
     ].enumerated().map { offset, pair in
         PeriodSlot(index: offset + 1,
                    startMinutes: TimeFormat.minutes(from: pair.0) ?? 0,
@@ -61,11 +63,24 @@ enum WeekdayName {
 
     static func full(_ weekday: Int) -> String { "周" + short(weekday) }
 
-    /// 从文本中识别星期：周一 / 星期一 / 礼拜一 / Mon / Monday。
+    /// 从文本中识别星期：周一 / 星期一 / 今天 / Mon。
     /// `allowBare` 用于表格表头，允许单独的「一」「二」…「日」。
     static func detect(in text: String, allowBare: Bool = false) -> Int? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let lowered = trimmed.lowercased()
+        if trimmed.contains("今天") {
+            // 「今天 11/23」优先用截图日期，避免导入日与课表日不一致时列错位
+            if let date = Self.dateInHeader(trimmed) {
+                return SemesterCalendar.weekday(of: date)
+            }
+            return SemesterCalendar.weekday(of: .now)
+        }
+        if trimmed.contains("明天") {
+            if let date = Self.dateInHeader(trimmed) {
+                return SemesterCalendar.weekday(of: date.addingTimeInterval(86_400))
+            }
+            return SemesterCalendar.weekday(of: Date.now.addingTimeInterval(86_400))
+        }
         for (i, n) in names.enumerated() {
             for prefix in ["周", "星期", "礼拜"] where trimmed.contains(prefix + n) { return i + 1 }
         }
@@ -76,9 +91,25 @@ enum WeekdayName {
         }
         if allowBare {
             if trimmed == "天" { return 7 }
+            // 「今天 11/23」里的「今天」已处理；光秃的「一」只在表头用
             if let index = names.firstIndex(of: trimmed) { return index + 1 }
         }
         return nil
+    }
+
+    /// 解析表头里的「11/23」「11-23」「11.23」。
+    private static func dateInHeader(_ text: String) -> Date? {
+        guard let match = text.range(of: #"(\d{1,2})[/.-](\d{1,2})"#, options: .regularExpression) else { return nil }
+        let snippet = String(text[match])
+        let parts = snippet.split { "/.-".contains($0) }.compactMap { Int($0) }
+        guard parts.count == 2 else { return nil }
+        let month = parts[0], day = parts[1]
+        let cal = SemesterCalendar.calendar
+        var year = cal.component(.year, from: .now)
+        let currentMonth = cal.component(.month, from: .now)
+        if month - currentMonth > 6 { year -= 1 }
+        if currentMonth - month > 6 { year += 1 }
+        return cal.date(from: DateComponents(year: year, month: month, day: day))
     }
 }
 
@@ -144,9 +175,40 @@ enum SemesterCalendar {
         return Int(floor(Double(days) / 7.0)) + 1
     }
 
+    /// 根据「第 N 周」反推开学周一，使 referenceDate 落在第 N 教学周。
+    static func semesterStart(forTeachingWeek week: Int, referenceDate: Date = .now) -> Date? {
+        guard (1...30).contains(week) else { return nil }
+        let cal = calendar
+        let weekStart = cal.dateInterval(of: .weekOfYear, for: referenceDate)?.start ?? cal.startOfDay(for: referenceDate)
+        return cal.date(byAdding: .day, value: -(week - 1) * 7, to: weekStart)
+    }
+
     static func date(on day: Date, minutes: Int) -> Date {
         let start = calendar.startOfDay(for: day)
         return start.addingTimeInterval(TimeInterval(minutes * 60))
+    }
+}
+
+/// 从超星等截图顶栏「第13周 (本周)」识别当前教学周（不含「第1-16周」区间）。
+enum TeachingWeekDetector {
+    private static let pattern = try! NSRegularExpression(
+        pattern: #"第\s*(\d{1,2})\s*周(?:\s*[（(]\s*本周\s*[）)])?"#
+    )
+
+    static func currentWeek(in text: String) -> Int? {
+        let ns = text as NSString
+        let matches = pattern.matches(in: text, range: NSRange(location: 0, length: ns.length))
+        var best: Int?
+        for match in matches {
+            guard match.numberOfRanges >= 2, let r = Range(match.range(at: 1), in: text),
+                  let week = Int(text[r]), (1...30).contains(week) else { continue }
+            let full = ns.substring(with: match.range)
+            // 跳过「第1-16周」这类上课周次区间
+            if full.contains("-") || full.contains("－") || full.contains("—") || full.contains("~") { continue }
+            if full.contains("本周") { return week }
+            if best == nil { best = week }
+        }
+        return best
     }
 }
 

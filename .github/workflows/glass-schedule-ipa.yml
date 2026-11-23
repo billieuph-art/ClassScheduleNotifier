@@ -90,13 +90,15 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: glass-schedule-sideload-${{ github.run_number }}
-          name: 玻璃课表 侧载版 IPA ${{ github.run_number }}（v1.0.3）
+          name: 玻璃课表 侧载版 IPA ${{ github.run_number }}（v1.0.4）
           target_commitish: ${{ github.sha }}
           prerelease: true
           files: GlassSchedule/GlassSchedule-sideload.ipa
           body: |
-            ## 侧载专用包（v1.0.3）
-            - 修复通知权限：侧载时 UNError 1 会引导并跳转「系统通知设置」，可发测试通知
+            ## 侧载专用包（v1.0.4）
+            - **课表截图识别**：拼接竖排碎片课名（如「水利工+程造价+二@231+3」→「水利工程造价二@2313」），正确拆教室号
+            - 优先用网格规则识别超星「今天/周二 + 课程@教室」；避免 AI 输出「程造价」残片或编造周次
+            - 识别顶栏「第 N 周」并校准教学周；表头日期对齐星期列
             - Bundle ID：`com.billieuphart.glassschedule`（+ 小组件 `.widgets`）
             - 无 Watch / 无 App Group / 无时效通知权限；已 ad-hoc 签名
             - 需要 **iOS 26**；安装时请保留 Widget 扩展
