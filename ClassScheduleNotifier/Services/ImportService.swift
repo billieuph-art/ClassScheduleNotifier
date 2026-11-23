@@ -1,93 +1,83 @@
 import Foundation
 
-public final class ScheduleStore: ObservableObject {
-    @Published public var courses: [Course] = []
+enum ImportService {
+    static func parseCSV(_ text: String) throws -> [Course] {
+        let rows = text
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .components(separatedBy: "\n")
+            .filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
 
-    private let storageURL: URL = {
-        let fileManager = FileManager.default
-        let directory = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
-        return directory.appendingPathComponent("courses.json")
-    }()
-
-    public func load() {
-        guard let data = try? Data(contentsOf: storageURL) else {
-            self.courses = SampleData.makeSampleCourses()
-            save()
-            return
+        guard rows.count > 1 else { return [] }
+        let headers = parseCSVRow(rows[0]).map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        let required = ["name", "weekday", "start", "end"]
+        guard required.allSatisfy(headers.contains) else {
+            throw ImportError.invalidHeader
         }
 
-        do {
-            let decoded = try JSONDecoder().decode([Course].self, from: data)
-            self.courses = decoded
-        } catch {
-            self.courses = SampleData.makeSampleCourses()
-            save()
+        var result: [Course] = []
+        for row in rows.dropFirst() {
+            let values = parseCSVRow(row)
+            guard values.count == headers.count else { continue }
+            let item = Dictionary(uniqueKeysWithValues: zip(headers, values))
+            guard
+                let name = item["name"], !name.trimmingCharacters(in: .whitespaces).isEmpty,
+                let weekdayValue = item["weekday"].flatMap(Int.init),
+                let weekday = Weekday(rawValue: weekdayValue),
+                let start = item["start"].flatMap(parseTime),
+                let end = item["end"].flatMap(parseTime),
+                end > start
+            else { continue }
+
+            result.append(Course(
+                name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+                teacher: item["teacher"] ?? "",
+                location: item["location"] ?? "",
+                weekday: weekday,
+                startTime: start,
+                endTime: end,
+                notes: item["notes"] ?? ""
+            ))
         }
+        return result
     }
 
-    public func save() {
-        do {
-            let encoder = JSONEncoder()
-            let data = try encoder.encode(courses)
-            try data.write(to: storageURL)
-        } catch {
-            print("保存课程失败: \(error)")
+    private static func parseCSVRow(_ line: String) -> [String] {
+        var fields: [String] = []
+        var field = ""
+        var quoted = false
+        var iterator = line.makeIterator()
+
+        while let character = iterator.next() {
+            if character == "\"" {
+                if quoted {
+                    // CSV escaped quote: ""
+                    field.append(character)
+                }
+                quoted.toggle()
+            } else if character == "," && !quoted {
+                fields.append(field.trimmingCharacters(in: .whitespacesAndNewlines))
+                field = ""
+            } else {
+                field.append(character)
+            }
         }
+        fields.append(field.trimmingCharacters(in: .whitespacesAndNewlines))
+        return fields.map { $0.replacingOccurrences(of: "\"\"", with: "\"") }
     }
 
-    public func add(_ course: Course) {
-        courses.append(course)
-        save()
+    private static func parseTime(_ value: String) -> Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "H:mm"
+        return formatter.date(from: value.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
-    public func remove(_ course: Course) {
-        courses.removeAll { $0.id == course.id }
-        save()
-    }
-}
-
-public enum SampleData {
-    public static func makeSampleCourses() -> [Course] {
-        let calendar = Calendar(identifier: .gregorian)
-
-        func date(for weekday: Weekday, hour: Int, minute: Int) -> Date {
-            let now = Date()
-            var components = calendar.dateComponents([.year, .month, .day, .weekday, .hour, .minute], from: now)
-            components.weekday = weekday.rawValue
-            components.hour = hour
-            components.minute = minute
-            components.second = 0
-            return calendar.date(from: components) ?? now
+    enum ImportError: LocalizedError {
+        case invalidHeader
+        var errorDescription: String? {
+            "CSV 表头必须包含 name、weekday、start、end；weekday 使用 1（周一）至 7（周日）。"
         }
-
-        return [
-            Course(
-                name: "高等数学",
-                teacher: "李老师",
-                location: "A101",
-                weekday: .monday,
-                startTime: date(for: .monday, hour: 8, minute: 30),
-                endTime: date(for: .monday, hour: 10, minute: 0),
-                notes: "第一节课"
-            ),
-            Course(
-                name: "计算机网络",
-                teacher: "王老师",
-                location: "C208",
-                weekday: .wednesday,
-                startTime: date(for: .wednesday, hour: 10, minute: 15),
-                endTime: date(for: .wednesday, hour: 11, minute: 45),
-                notes: "实验课"
-            ),
-            Course(
-                name: "英语口语",
-                teacher: "陈老师",
-                location: "B305",
-                weekday: .friday,
-                startTime: date(for: .friday, hour: 14, minute: 0),
-                endTime: date(for: .friday, hour: 15, minute: 30),
-                notes: "课堂互动"
-            )
-        ]
     }
 }
