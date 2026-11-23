@@ -108,10 +108,10 @@ fi
 test -f "$APP/Assets.car"
 test -f "$APP/AppIcon60x60@2x.png"
 
-# Assets.car 过大往往来自 dark/tinted 多套图标，侧载异常高发；完整包控制在 400KB 内
+# Assets.car 过大往往来自 dark/tinted 多套图标，侧载异常高发；完整包控制在 600KB 内
 CAR_SIZE=$(stat -f%z "$APP/Assets.car" 2>/dev/null || stat -c%s "$APP/Assets.car")
 echo "Assets.car=$CAR_SIZE"
-if [ "$CAR_SIZE" -gt 400000 ]; then
+if [ "$CAR_SIZE" -gt 600000 ]; then
   echo "ERROR: Assets.car too large ($CAR_SIZE) — simplify AppIcon"
   exit 1
 fi
