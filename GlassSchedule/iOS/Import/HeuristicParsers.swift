@@ -350,7 +350,8 @@ enum GridHeuristicParser {
         return result
     }
 
-    /// 同一天、教室相同、课名相同且节次相连 → 合并（如 1-2 与 3-4 合成 1-4）。
+    /// 同一天、同名同教室且节次相连时，只合并「被拆碎的同一大节」。
+    /// 例如 OCR 把第 1、2 节拆成两条 → 合成 1-2；但超星里 1-2 与 3-4 是两格，保持分开，不合成 1-4。
     private static func mergeAdjacent(_ drafts: [CourseDraft], slots: [PeriodSlot]) -> [CourseDraft] {
         let sorted = drafts.sorted { ($0.weekday, $0.startPeriod, $0.startMinutes) < ($1.weekday, $1.startPeriod, $1.startMinutes) }
         var result: [CourseDraft] = []
@@ -359,15 +360,20 @@ enum GridHeuristicParser {
                last.weekday == draft.weekday,
                last.name == draft.name,
                last.classroom == draft.classroom,
-               draft.startPeriod <= last.endPeriod + 1 {
-                last.endPeriod = max(last.endPeriod, draft.endPeriod)
-                last.endMinutes = max(last.endMinutes, draft.endMinutes)
-                if last.weeks.isEmpty { last.weeks = draft.weeks }
-                last.complete(with: slots, preferPeriods: true)
-                result[result.count - 1] = last
-            } else {
-                result.append(draft)
+               draft.startPeriod == last.endPeriod + 1 {
+                let lastSpan = last.endPeriod - last.startPeriod + 1
+                let draftSpan = draft.endPeriod - draft.startPeriod + 1
+                // 合并后总跨度不超过 2 节（一大节），避免把 1-2 与 3-4 粘成 1-4
+                if lastSpan + draftSpan <= 2 {
+                    last.endPeriod = draft.endPeriod
+                    last.endMinutes = max(last.endMinutes, draft.endMinutes)
+                    if last.weeks.isEmpty { last.weeks = draft.weeks }
+                    last.complete(with: slots, preferPeriods: true)
+                    result[result.count - 1] = last
+                    continue
+                }
             }
+            result.append(draft)
         }
         return result
     }

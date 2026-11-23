@@ -167,15 +167,24 @@ struct PeriodTableEditor: View {
                 Stepper("课间休息 \(breakMinutes) 分钟", value: $breakMinutes, in: 0...60, step: 5)
                 DatePicker("第一节上课", selection: binding(for: $firstStartMinutes), displayedComponents: .hourAndMinute)
                 Toggle("改完后自动重排后面所有节", isOn: $autoCascade)
-                Button("按以上规则重新生成全部作息") { applyCascade() }
+                Button("按以上规则重新生成全部作息") { applyCascade(updateCourses: true) }
             } header: {
                 Text("批量设置")
             } footer: {
-                Text("例：第一节 08:50、时长 40、课间 10 → 第二节自动 09:40–10:20，第三节 10:30–11:10，以此类推。若中间有午休，可先关掉自动重排，再手动改某一节的上课时间。")
+                Text("例：第一节 08:50、时长 40、课间 10 → ①08:50–09:30 ②09:40–10:20 ③10:30–11:10 ④11:20–12:00。重排后会同步更新已有课程的上下课时间。")
+            }
+
+            if slots.count >= 4 {
+                Section("预览（前 4 节）") {
+                    ForEach(slots.prefix(4)) { slot in
+                        LabeledContent("第 \(slot.index) 节",
+                                       value: "\(TimeFormat.string(slot.startMinutes))–\(TimeFormat.string(slot.endMinutes))")
+                    }
+                }
             }
 
             ForEach($slots) { $slot in
-                Section("第 \(slot.index) 节") {
+                Section("第 \(slot.index) 节 · \(TimeFormat.string(slot.startMinutes))–\(TimeFormat.string(slot.endMinutes))") {
                     DatePicker("上课", selection: binding(for: $slot.startMinutes), displayedComponents: .hourAndMinute)
                     DatePicker("下课", selection: binding(for: $slot.endMinutes), displayedComponents: .hourAndMinute)
                 }
@@ -207,23 +216,44 @@ struct PeriodTableEditor: View {
         .navigationTitle("作息时间")
         .onChange(of: durationMinutes) { _, newValue in
             SharedSettings.periodDurationMinutes = newValue
-            if autoCascade { applyCascade() }
+            if autoCascade { applyCascade(updateCourses: true) }
         }
         .onChange(of: breakMinutes) { _, newValue in
             SharedSettings.periodBreakMinutes = newValue
-            if autoCascade { applyCascade() }
+            if autoCascade { applyCascade(updateCourses: true) }
         }
         .onChange(of: firstStartMinutes) { _, _ in
-            if autoCascade { applyCascade() }
+            if autoCascade { applyCascade(updateCourses: true) }
         }
         .onChange(of: slots) { _, newValue in
             guard !suppressCascade else { return }
             SharedSettings.periodSlots = newValue
             Task { await AppCoordinator.shared.refreshAll() }
         }
+        .onAppear {
+            // 若当前作息把课间算进了课时（如下课时间=下一节上课），按批量参数纠正一次
+            if slotsLookMergedWithBreak() {
+                applyCascade(updateCourses: true)
+            }
+        }
     }
 
-    private func applyCascade() {
+    /// 检测「08:50–09:40、09:40–10:30」这种把课间吃进课时的错误作息。
+    private func slotsLookMergedWithBreak() -> Bool {
+        guard slots.count >= 2, breakMinutes > 0 else { return false }
+        var suspicious = 0
+        for index in 0..<(slots.count - 1) {
+            let current = slots[index]
+            let next = slots[index + 1]
+            let duration = current.endMinutes - current.startMinutes
+            if current.endMinutes == next.startMinutes, duration == durationMinutes + breakMinutes {
+                suspicious += 1
+            }
+        }
+        return suspicious >= 2
+    }
+
+    private func applyCascade(updateCourses: Bool) {
         suppressCascade = true
         let count = max(slots.count, 1)
         slots = PeriodTable.cascade(count: count,
@@ -234,7 +264,8 @@ struct PeriodTableEditor: View {
         SharedSettings.periodBreakMinutes = breakMinutes
         SharedSettings.periodSlots = slots
         suppressCascade = false
-        Task { await AppCoordinator.shared.refreshAll() }
+        if updateCourses { applyToCourses() }
+        else { Task { await AppCoordinator.shared.refreshAll() } }
     }
 
     private func applyToCourses() {
