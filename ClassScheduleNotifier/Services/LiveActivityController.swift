@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import ActivityKit
 
 struct NextClassAttributes: ActivityAttributes {
