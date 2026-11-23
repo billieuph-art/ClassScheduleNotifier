@@ -6,7 +6,7 @@ struct SettingsView: View {
     @Query private var courses: [Course]
 
     @AppStorage(SharedSettings.Key.semesterStart, store: SharedSettings.defaults) private var semesterStartRaw: Double = 0
-    @AppStorage(SharedSettings.Key.reminderMinutes, store: SharedSettings.defaults) private var reminderMinutes = 30
+    @AppStorage(SharedSettings.Key.reminderMinutes, store: SharedSettings.defaults) private var reminderMinutes = 20
     @AppStorage(SharedSettings.Key.autoLiveActivity, store: SharedSettings.defaults) private var autoLiveActivity = true
     @AppStorage(SharedSettings.Key.autoClassifyPhotos, store: SharedSettings.defaults) private var autoClassifyPhotos = true
     @AppStorage(SharedSettings.Key.photoToleranceMinutes, store: SharedSettings.defaults) private var tolerance = 10
