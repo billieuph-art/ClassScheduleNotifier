@@ -46,9 +46,8 @@ enum BackgroundScheduler {
     @MainActor
     static func schedulePhotos() {
         guard SharedSettings.autoClassifyPhotos else { return }
-        let request = BGProcessingTaskRequest(identifier: photosID)
-        request.requiresNetworkConnectivity = false
-        request.requiresExternalPower = false
+        // 侧载免费描述文件通常没有 processing 权限；改用 App Refresh，避免安装失败
+        let request = BGAppRefreshTaskRequest(identifier: photosID)
         request.earliestBeginDate = Date.now.addingTimeInterval(2 * 3600)
         try? BGTaskScheduler.shared.submit(request)
     }

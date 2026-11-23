@@ -12,7 +12,6 @@ permissions:
 
 jobs:
   build-ipa:
-    # macos-26 常排队过久；macos-15 + Xcode 26 足够编 iOS 26
     runs-on: macos-15
     defaults:
       run:
@@ -22,14 +21,12 @@ jobs:
 
       - uses: maxim-lobanov/setup-xcode@v1
         with:
-          # 固定大版本，避免 latest-stable 突然跳版本导致侧载异常
           xcode-version: "26.3"
 
       - name: Generate Xcode project
         run: |
           xcodebuild -version
           brew install xcodegen
-          # 确保没有残留的 entitlements / Watch 依赖干扰侧载
           rm -f iOS/*.entitlements Widgets/*.entitlements
           xcodegen generate
 
@@ -48,93 +45,107 @@ jobs:
             }
           grep -E "warning:" build.log | sort -u | head -40 || true
 
-      - name: Package unsigned sideload IPA
+      - name: Package sideload IPAs (full + lite)
         run: |
           set -euo pipefail
-          APP=build/Build/Products/Release-iphoneos/GlassSchedule.app
-          test -d "$APP"
+          SRC=build/Build/Products/Release-iphoneos/GlassSchedule.app
+          test -d "$SRC"
 
-          # 去掉 Watch（免费 Apple ID / Sideloadly 常因此失败）
-          rm -rf "$APP/Watch"
+          package_one() {
+            local label="$1"   # full | lite
+            local out_ipa="$2"
+            local include_plugins="$3"
 
-          # 清掉可能残留的付费权限描述
-          find "$APP" -name '*.entitlements' -delete || true
+            rm -rf "_pkg_$label" "Payload"
+            mkdir -p "_pkg_$label"
+            ditto "$SRC" "_pkg_$label/GlassSchedule.app"
+            local APP="_pkg_$label/GlassSchedule.app"
 
-          # iPhone-only：去掉 iPad 图标文件与 Info 键，降低 installd / 重签异常概率
-          rm -f "$APP"/AppIcon*ipad* "$APP"/AppIcon*~ipad* || true
-          if [ -f "$APP/Info.plist" ]; then
+            rm -rf "$APP/Watch"
+            find "$APP" -name '*.entitlements' -delete || true
+            rm -f "$APP"/AppIcon*ipad* "$APP"/AppIcon*~ipad* || true
             plutil -remove 'CFBundleIcons~ipad' "$APP/Info.plist" 2>/dev/null || true
-          fi
 
-          # 彻底去掉代码签名，交给 Sideloadly / AltStore / 爱思 干净重签
-          # （CI ad-hoc 签名常导致部分工具「安装失败 / 签名无效」）
-          if [ -d "$APP/PlugIns" ]; then
-            for appex in "$APP"/PlugIns/*.appex; do
-              [ -d "$appex" ] || continue
-              codesign --remove-signature "$appex" 2>/dev/null || true
-              rm -rf "$appex/_CodeSignature"
-            done
-          fi
-          codesign --remove-signature "$APP" 2>/dev/null || true
-          rm -rf "$APP/_CodeSignature"
-          find "$APP" -name _CodeSignature -type d -prune -exec rm -rf {} + 2>/dev/null || true
+            if [ "$include_plugins" != "yes" ]; then
+              rm -rf "$APP/PlugIns"
+              echo "Lite: removed PlugIns (no Live Activity / widgets)"
+            fi
 
-          # 确保主二进制与扩展可执行
-          chmod +x "$APP/GlassSchedule" || true
-          if [ -d "$APP/PlugIns" ]; then
-            find "$APP/PlugIns" -type f -name 'GlassScheduleWidgets' -exec chmod +x {} \;
-          fi
+            # 与可安装的 v1.0.7 一致：先扩展后主包 ad-hoc 签名（含 DER）
+            if [ -d "$APP/PlugIns" ]; then
+              for appex in "$APP"/PlugIns/*.appex; do
+                [ -d "$appex" ] || continue
+                codesign --force --sign - --timestamp=none --generate-entitlement-der "$appex"
+              done
+            fi
+            codesign --force --sign - --timestamp=none --generate-entitlement-der "$APP"
+            codesign -dv --verbose=2 "$APP" || true
 
-          rm -rf Payload GlassSchedule-sideload.ipa
-          mkdir -p Payload
-          # ditto 比 cp -R 更完整保留 bundle 属性
-          ditto "$APP" Payload/GlassSchedule.app
-          rm -rf Payload/GlassSchedule.app/Watch
-          rm -f Payload/GlassSchedule.app/AppIcon*ipad* Payload/GlassSchedule.app/AppIcon*~ipad* || true
-          plutil -remove 'CFBundleIcons~ipad' Payload/GlassSchedule.app/Info.plist 2>/dev/null || true
+            chmod +x "$APP/GlassSchedule" || true
+            if [ -d "$APP/PlugIns" ]; then
+              find "$APP/PlugIns" -type f -name 'GlassScheduleWidgets' -exec chmod +x {} \;
+            fi
 
-          # 标准 IPA：仅 Payload/
-          zip -r -y -q GlassSchedule-sideload.ipa Payload
-          ls -lh GlassSchedule-sideload.ipa
+            mkdir -p Payload
+            ditto "$APP" Payload/GlassSchedule.app
+            zip -r -y -q "$out_ipa" Payload
+            ls -lh "$out_ipa"
 
-          echo "Bundle IDs / versions:"
-          plutil -p Payload/GlassSchedule.app/Info.plist | grep -E "CFBundleIdentifier|CFBundleDisplayName|MinimumOSVersion|CFBundleShortVersionString|CFBundleVersion" || true
-          if [ -d Payload/GlassSchedule.app/PlugIns ]; then
-            find Payload/GlassSchedule.app/PlugIns -name Info.plist -print -exec plutil -p {} \; \
-              | grep -E "CFBundleIdentifier|CFBundleShortVersionString|CFBundleVersion" || true
-          fi
+            echo "---- $label summary ----"
+            plutil -p Payload/GlassSchedule.app/Info.plist | grep -E "CFBundleIdentifier|CFBundleDisplayName|MinimumOSVersion|CFBundleShortVersionString|UIBackgroundModes" || true
+            if [ -d Payload/GlassSchedule.app/PlugIns ]; then
+              find Payload/GlassSchedule.app/PlugIns -name Info.plist -exec plutil -p {} \; | grep CFBundleIdentifier || true
+            else
+              echo "(no PlugIns)"
+            fi
+            # 确认有签名 blob（与 1.0.7 相同策略）
+            codesign -d --verbose=4 Payload/GlassSchedule.app 2>&1 | head -20 || true
+            rm -rf Payload
+          }
 
-      - name: Validate IPA before publish
+          package_one full GlassSchedule-sideload.ipa yes
+          package_one lite GlassSchedule-sideload-lite.ipa no
+
+      - name: Validate IPAs before publish
         run: |
           chmod +x Scripts/validate-sideload-ipa.sh
           Scripts/validate-sideload-ipa.sh GlassSchedule-sideload.ipa
+          Scripts/validate-sideload-ipa.sh GlassSchedule-sideload-lite.ipa --lite
 
       - uses: actions/upload-artifact@v4
         with:
-          name: GlassSchedule-sideload-ipa
-          path: GlassSchedule/GlassSchedule-sideload.ipa
+          name: GlassSchedule-sideload-ipas
+          path: |
+            GlassSchedule/GlassSchedule-sideload.ipa
+            GlassSchedule/GlassSchedule-sideload-lite.ipa
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: glass-schedule-sideload-${{ github.run_number }}
-          name: Classio 侧载版 IPA ${{ github.run_number }}（v1.0.9）
+          name: Classio 侧载版 IPA ${{ github.run_number }}（v1.0.10）
           target_commitish: ${{ github.sha }}
           prerelease: true
-          files: GlassSchedule/GlassSchedule-sideload.ipa
+          files: |
+            GlassSchedule/GlassSchedule-sideload.ipa
+            GlassSchedule/GlassSchedule-sideload-lite.ipa
           body: |
-            ## Classio 侧载专用包（v1.0.9）
-            - **侧载安装修复**：改为**未签名 IPA**（去掉 CI ad-hoc 签名），便于 Sideloadly / 爱思 / AltStore 干净重签
-            - 去掉 iPad 图标残留；发布前自动跑结构校验，不通过不发版
-            - 实时活动倒计时居中；灵动岛倒计时居中 + 紧凑态短格式防裁切
-            - 多机型自适应课表网格 / 课程卡片
-            - 需要 **iOS 26+**；**不要用 Live Container**
+            ## Classio 侧载专用包（v1.0.10）— 针对「无法安装」修复
 
-            ### 安装步骤（重要）
-            1. 若手机上已有旧版 Classio / 玻璃课表，先**删除**再装（同 Bundle ID 升级失败很常见）
-            2. Sideloadly 登录 Apple ID → 拖入本 IPA
-            3. **保留 Widget / 扩展**（不要勾选删除 `.appex`），否则实时活动与灵动岛不会出现
-            4. 关闭 Live Container / 类似沙盒选项
-            5. 装好后：设置最底部 →「Classio」→「通知」→ 允许
+            ### 请先试这两个包
+            1. **`GlassSchedule-sideload-lite.ipa`（推荐先装）** — **无小组件扩展**，最容易装上
+            2. **`GlassSchedule-sideload.ipa`** — 完整版（含灵动岛 / 实时活动）
 
-            Bundle ID：`com.billieuphart.glassschedule`（扩展 `.widgets`）
+            ### 本版修复
+            - 恢复与可安装的 v1.0.7 相同的 **ad-hoc 签名**（1.0.9 去签名导致部分工具无法重签）
+            - 去掉 `UIBackgroundModes: processing`（免费证书常见安装失败点）
+            - 图标改回单资源（避免超大 Assets.car）
+            - 需要 **iOS 26+**
+
+            ### 安装步骤
+            1. **先删除**手机上旧的 Classio / 玻璃课表
+            2. Sideloadly / 爱思：先装 **lite**；能打开后再装完整版
+            3. 装完整版时：**不要删 .appex**，关掉 Live Container
+            4. 设置最底部 → Classio → 通知 → 允许
+
+            Bundle ID：`com.billieuphart.glassschedule`
