@@ -1,11 +1,13 @@
-name: iOS Simulator Build
+name: iOS unsigned IPA build
 
 on:
   push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+    branches:
+      - ci/ios-cloud-build
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
@@ -13,16 +15,35 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Install XcodeGen
         run: brew install xcodegen
+
       - name: Generate Xcode project
-        run: xcodegen generate
-      - name: Build for iOS Simulator
+        run: xcodegen generate --spec project.yml
+
+      - name: Build unsigned iOS archive
         run: |
           xcodebuild \
             -project ClassScheduleNotifier.xcodeproj \
             -scheme ClassScheduleNotifier \
-            -sdk iphonesimulator \
-            -destination 'generic/platform=iOS Simulator' \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/ClassScheduleNotifier.xcarchive" \
             CODE_SIGNING_ALLOWED=NO \
-            build
+            CODE_SIGNING_REQUIRED=NO \
+            archive
+
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p Payload
+          cp -R "$RUNNER_TEMP/ClassScheduleNotifier.xcarchive/Products/Applications/ClassScheduleNotifier.app" Payload/
+          /usr/bin/zip -r ClassScheduleNotifier-unsigned.ipa Payload
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClassScheduleNotifier-unsigned-ipa
+          path: ClassScheduleNotifier-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
