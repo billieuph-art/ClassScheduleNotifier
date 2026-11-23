@@ -90,20 +90,18 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: glass-schedule-sideload-${{ github.run_number }}
-          name: 玻璃课表 侧载版 IPA ${{ github.run_number }}（v1.0.2）
+          name: 玻璃课表 侧载版 IPA ${{ github.run_number }}（v1.0.3）
           target_commitish: ${{ github.sha }}
           prerelease: true
           files: GlassSchedule/GlassSchedule-sideload.ipa
           body: |
-            ## 侧载专用包（v1.0.2）
+            ## 侧载专用包（v1.0.3）
+            - 修复通知权限：侧载时 UNError 1 会引导并跳转「系统通知设置」，可发测试通知
             - Bundle ID：`com.billieuphart.glassschedule`（+ 小组件 `.widgets`）
-            - **已去掉 Apple Watch App**（免费证书 App ID 不够时常装不上）
-            - **已去掉 App Group / 时效通知等付费权限**
-            - 已做 ad-hoc 签名，可用 Sideloadly / AltStore / 爱思助手重签安装
-            - 需要 **iOS 26**
-            - 侧载时请勾选安装 **Widget / 扩展**，实时活动才显示
+            - 无 Watch / 无 App Group / 无时效通知权限；已 ad-hoc 签名
+            - 需要 **iOS 26**；安装时请保留 Widget 扩展
 
-            ### Sideloadly 建议
-            1. 勾选 *Apple ID* 登录你的账号
-            2. 不要删除 `.appex` 扩展
-            3. 若仍失败：换「Install after sign」/ 关掉「Live Container」类选项再试
+            ### 通知权限怎么开
+            1. 打开 App → 设置 →「打开系统通知设置」
+            2. 在「通知 › 玻璃课表」打开「允许通知」
+            3. 回到 App 点「发送测试通知」确认

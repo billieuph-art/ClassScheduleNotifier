@@ -41,6 +41,15 @@ struct SettingsView: View {
                     Button("开启通知权限") {
                         Task { await handleNotificationPermission() }
                     }
+                    Button("打开系统通知设置") {
+                        NotificationScheduler.shared.openNotificationSettings()
+                    }
+                    Button("发送测试通知（5秒后）") {
+                        Task {
+                            permissionAlert = await NotificationScheduler.shared.scheduleTestNotification()
+                            openSettingsAfterAlert = false
+                        }
+                    }
                     Toggle("自动开启实时活动", isOn: $autoLiveActivity)
                     LabeledContent("实时活动", value: LiveActivityManager.shared.statusText)
                     Button("立即开启下一节课实时活动") {
@@ -52,7 +61,7 @@ struct SettingsView: View {
                 } header: {
                     Text("提醒与实时活动")
                 } footer: {
-                    Text("若点「开启通知权限」没有弹窗，多半是以前拒绝过，需要去系统设置里重新打开。实时活动依赖小组件扩展，侧载时请保留 Widget。")
+                    Text("侧载安装时系统经常不弹通知授权框（会报 UNError 1）。请点「打开系统通知设置」，在「通知 › 玻璃课表」里打开「允许通知」，再回来发测试通知。实时活动需保留 Widget 扩展。")
                 }
 
                 Section {
@@ -98,7 +107,7 @@ struct SettingsView: View {
             }
             .alert("通知权限", isPresented: Binding(get: { permissionAlert != nil }, set: { if !$0 { permissionAlert = nil } })) {
                 if openSettingsAfterAlert {
-                    Button("去设置") { openSystemSettings() }
+                    Button("去通知设置") { NotificationScheduler.shared.openNotificationSettings() }
                     Button("取消", role: .cancel) {}
                 } else {
                     Button("好", role: .cancel) {}
@@ -130,12 +139,11 @@ struct SettingsView: View {
         await refreshNotificationStatus()
         if outcome == .granted || outcome == .provisional {
             await AppCoordinator.shared.refreshAll()
+        } else if outcome.shouldOpenSettings {
+            // 侧载环境几乎总会走到这里：稍延迟后自动跳转系统通知设置，避免只看到错误。
+            try? await Task.sleep(for: .milliseconds(400))
+            NotificationScheduler.shared.openNotificationSettings()
         }
-    }
-
-    private func openSystemSettings() {
-        guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
-        UIApplication.shared.open(url)
     }
 }
 

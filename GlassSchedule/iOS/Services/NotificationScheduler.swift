@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 import UserNotifications
 
 @MainActor
@@ -29,27 +30,34 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
 
         var message: String {
             switch self {
-            case .granted: return "通知权限已开启，上课前提醒会生效。"
-            case .deniedNeedsSettings: return "通知权限此前被关闭。请在系统设置里打开「允许通知」。"
-            case .provisional: return "已开启安静通知（临时授权）。"
-            case .failed(let detail): return "请求失败：\(detail)"
+            case .granted:
+                return "通知权限已开启，上课前提醒会生效。"
+            case .deniedNeedsSettings:
+                return "侧载安装时系统常常不弹出授权框（UNError 1）。请到「设置 › 通知 › 玻璃课表」打开「允许通知」，然后回到 App 再点一次「重新检查通知权限」。"
+            case .provisional:
+                return "已开启安静通知。如需横幅提醒，请到系统设置里把通知改为「横幅」。"
+            case .failed(let detail):
+                return "请求失败：\(detail)\n\n请到「设置 › 通知 › 玻璃课表」手动打开允许通知。"
             }
         }
 
         var shouldOpenSettings: Bool {
-            if case .deniedNeedsSettings = self { return true }
-            return false
+            switch self {
+            case .deniedNeedsSettings, .failed: return true
+            default: return false
+            }
         }
     }
 
     var authorizationStatusText: String {
         get async {
-            switch await center.notificationSettings().authorizationStatus {
+            let settings = await center.notificationSettings()
+            switch settings.authorizationStatus {
             case .authorized: return "已开启"
             case .provisional: return "安静通知"
             case .ephemeral: return "临时授权"
             case .denied: return "已关闭（需去系统设置开启）"
-            case .notDetermined: return "尚未请求"
+            case .notDetermined: return "尚未授权（侧载请去系统设置打开）"
             @unknown default: return "未知"
             }
         }
@@ -61,7 +69,7 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
         return outcome == .granted || outcome == .provisional
     }
 
-    /// 尚未决定时弹出系统授权框；已被拒绝时返回需跳转设置，避免“点了没反应”。
+    /// 侧载包上 `requestAuthorization` 常直接抛 UNErrorDomain 1 且不弹窗，这时引导用户去系统设置。
     @discardableResult
     func ensurePermission() async -> PermissionOutcome {
         let status = await center.notificationSettings().authorizationStatus
@@ -73,14 +81,60 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
         case .denied:
             return .deniedNeedsSettings
         case .notDetermined:
-            do {
-                let granted = try await center.requestAuthorization(options: [.alert, .sound, .badge])
-                return granted ? .granted : .deniedNeedsSettings
-            } catch {
-                return .failed(error.localizedDescription)
-            }
+            break
         @unknown default:
             return .failed("未知的授权状态")
+        }
+
+        // 1) 先尝试标准弹窗授权
+        if let outcome = await request(options: [.alert, .sound, .badge]) {
+            return outcome
+        }
+        // 2) 再试安静通知（部分侧载环境只允许 provisional）
+        if let outcome = await request(options: [.alert, .sound, .badge, .provisional]) {
+            return outcome
+        }
+
+        // 3) 仍失败：再读一次状态；很多情况下其实已经变成 denied / notDetermined，只能去设置
+        let again = await center.notificationSettings().authorizationStatus
+        switch again {
+        case .authorized: return .granted
+        case .provisional, .ephemeral: return .provisional
+        default: return .deniedNeedsSettings
+        }
+    }
+
+    private func request(options: UNAuthorizationOptions) async -> PermissionOutcome? {
+        do {
+            let granted = try await center.requestAuthorization(options: options)
+            if granted {
+                return options.contains(.provisional) ? .provisional : .granted
+            }
+            // 用户点了不允许，或系统没弹窗直接返回 false
+            let status = await center.notificationSettings().authorizationStatus
+            if status == .denied || status == .notDetermined { return .deniedNeedsSettings }
+            return .deniedNeedsSettings
+        } catch {
+            let ns = error as NSError
+            // UNErrorCode.notificationsNotAllowed = 1：侧载常见，当作需去设置处理，不要只弹原始错误。
+            if ns.domain == "UNErrorDomain", ns.code == 1 {
+                return nil // 交给上层尝试 provisional / 最终去设置
+            }
+            return .failed(error.localizedDescription)
+        }
+    }
+
+    /// 打开系统里本 App 的通知设置页（比通用设置页更准确）。
+    func openNotificationSettings() {
+        let candidates = [
+            UIApplication.openNotificationSettingsURLString,
+            UIApplication.openSettingsURLString,
+        ]
+        for raw in candidates {
+            if let url = URL(string: raw), UIApplication.shared.canOpenURL(url) {
+                UIApplication.shared.open(url)
+                return
+            }
         }
     }
 
@@ -116,6 +170,26 @@ final class NotificationScheduler: NSObject, UNUserNotificationCenterDelegate {
             let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
             let request = UNNotificationRequest(identifier: Self.idPrefix + occurrence.id, content: content, trigger: trigger)
             try? await center.add(request)
+        }
+    }
+
+    /// 发一条 5 秒后的测试通知，方便确认权限是否真的可用。
+    func scheduleTestNotification() async -> String {
+        let settings = await center.notificationSettings()
+        guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else {
+            return "还没有通知权限，请先到系统设置打开「允许通知」。"
+        }
+        let content = UNMutableNotificationContent()
+        content.title = "玻璃课表"
+        content.body = "通知已接通。上课前会按你设置的时间提醒。"
+        content.sound = .default
+        let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 5, repeats: false)
+        let request = UNNotificationRequest(identifier: "glassschedule-test", content: content, trigger: trigger)
+        do {
+            try await center.add(request)
+            return "已安排 5 秒后的测试通知，请回到桌面或锁屏查看。"
+        } catch {
+            return "测试通知发送失败：\(error.localizedDescription)"
         }
     }
 
