@@ -4,55 +4,36 @@
 
 - 课表导入（CSV / **截图 OCR** / 手动录入）
 - 上课前 20 分钟本地通知
-- Live Activities 实时状态
+- **Live Activities 实时状态**（已包含 Widget Extension，可在模拟器显示）
 - Apple Watch 课程展示与倒计时
 - 今天和本周课程视图
 
 ## 最近改进（2026-11）
 
-- **图片导入**：使用 Vision OCR 支持中文课表截图识别，尽量提取课程名、教师、教室、周数、时间。
-- **实时活动**：改进为使用系统倒计时机制，减少频繁更新。
-- **通知权限**：新增设置页，「开启通知权限」按钮会正确请求权限；若被拒绝则跳转系统设置。
+- **图片导入**：使用 Vision OCR 支持中文课表截图识别。
+- **实时活动**：新增 `ClassScheduleNotifierWidget` Extension，支持锁屏 + 灵动岛显示。
+- **通知权限**：设置页「开启通知权限」按钮已修复。
+- 课程列表每行有播放按钮，可直接启动实时活动（方便模拟器测试）。
+
+## 在 Xcode 模拟器中运行
+
+1. 安装 XcodeGen：`brew install xcodegen`
+2. 在项目根目录执行：`xcodegen generate`
+3. 打开生成的 `ClassScheduleNotifier.xcodeproj`
+4. 选择 iPhone 模拟器（iOS 17+）
+5. 运行主 Target `ClassScheduleNotifier`
+6. 添加课程后，点击课程行右侧的播放按钮，即可在模拟器的锁屏/灵动岛看到实时活动
+
+GitHub Actions 也会自动在 macos-15 上执行模拟器构建验证。
 
 ## 目录结构
 
-- App/
-- Models/
-- Services/
-  - `ImportService.swift`（含 OCR）
-  - `LiveActivityController.swift`
-  - `NotificationScheduler.swift`
-- Views/
-  - `ContentView.swift`
-  - `SettingsView.swift`
-  - `CourseEditorView.swift`
-  - `CourseRow.swift`
-
-## 使用说明
-
-### 图片导入
-
-在主界面点击左上角菜单 → 「导入课表截图」，选择从相册中的课表图片。
-
-识别依赖本机 Vision 框架，对清晰、对比度好的中文课表截图效果较好。复杂表格可能需要手动校对。
-
-### 通知权限
-
-进入设置（右上角齿轮）→ 「开启通知权限」。如果之前拒绝过，会自动打开系统设置。
-
-### Live Activities
-
-需要在 Xcode 中为 Target 开启 Live Activities Capability，并建议添加 Widget Extension 来定义实时活动的 UI。当前代码可以正确启动活动，但完整显示依赖扩展中的 ActivityConfiguration。
+- `ClassScheduleNotifier/` — 主 App
+- `ClassScheduleNotifierWidget/` — Live Activity Widget Extension
+- `project.yml` — XcodeGen 配置
 
 ## 开发环境
 
 - Xcode 15+
 - iOS 17.0+
 - Swift 5.9+
-
-## 快速开始
-
-1. 克隆仓库
-2. 用 Xcode 打开
-3. 确保已开启通知与 Live Activities 相关 Capability
-4. 运行到设备或模拟器
