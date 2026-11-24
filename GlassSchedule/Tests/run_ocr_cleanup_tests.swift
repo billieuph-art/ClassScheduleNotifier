@@ -63,9 +63,39 @@ func isRoomOnlyName(_ t: String) -> Bool {
 
 func looksLikePersonNameOnly(_ raw: String) -> Bool {
     let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        .replacingOccurrences(of: "老师|教授", with: "", options: .regularExpression)
     guard t.range(of: #"^[\p{Han}]{2,3}$"#, options: .regularExpression) != nil else { return false }
-    let hints = ["大学", "高等", "数学", "英语", "物理", "体育", "程序", "线性", "思想", "中国", "形势", "数据", "概率", "离散", "计算", "创新", "实验", "造价", "水利", "软件", "自习", "工程", "历史", "代数", "纲要"]
+    let continuations: Set<String> = [
+        "纲要", "基础", "原理", "概论", "导论", "教程", "实务", "设计", "分析", "统计",
+        "法治", "政策", "英语", "数学", "物理", "化学", "历史", "体育", "造价", "工程",
+        "软件", "实践", "实训", "听说", "综合", "实验",
+    ]
+    if continuations.contains(t) { return false }
+    let hints = ["大学", "高等", "数学", "英语", "物理", "体育", "程序", "线性", "思想", "中国", "形势", "数据", "概率", "离散", "计算", "创新", "实验", "造价", "水利", "软件", "自习", "工程", "历史", "代数", "纲要", "道德", "法治", "信号", "数字", "电路", "机械", "管理", "网络", "结构", "系统", "控制", "材料", "测量", "会计", "遥感", "测绘", "制图", "营销", "处理", "制造", "自动", "信息", "通信", "电子", "建筑", "施工", "监理"]
     return !hints.contains(where: { t.contains($0) })
+}
+
+func isTeacherStack(_ t: String) -> Bool {
+    let compact = t.replacingOccurrences(of: #"\s+|老师|教授"#, with: "", options: .regularExpression)
+    guard compact.count >= 4, compact.count <= 18 else { return false }
+    if compact.range(of: #"^[\p{Han}]+$"#, options: .regularExpression) == nil { return false }
+    let courseHints = ["大学", "高等", "数学", "英语", "物理", "体育", "程序", "线性", "思想", "中国", "形势", "数据", "概率", "离散", "计算", "创新", "实验"]
+    if courseHints.contains(where: { compact.contains($0) }) { return false }
+    if compact.count % 2 == 0 {
+        let half = compact.count / 2
+        if half >= 2, String(compact.prefix(half)) == String(compact.suffix(half)) { return true }
+    }
+    guard compact.count % 2 == 0, compact.count >= 6 else { return false }
+    var index = compact.startIndex
+    var people = 0
+    while index < compact.endIndex {
+        guard let next = compact.index(index, offsetBy: 2, limitedBy: compact.endIndex) else { return false }
+        let token = String(compact[index..<next])
+        guard looksLikePersonNameOnly(token) else { return false }
+        people += 1
+        index = next
+    }
+    return people >= 3
 }
 
 func isBogusCourseName(_ raw: String) -> Bool {
@@ -78,6 +108,7 @@ func isBogusCourseName(_ raw: String) -> Bool {
     if isWeekOnlyName(t) { return true }
     if isRoomOnlyName(t) { return true }
     if looksLikePersonNameOnly(t) { return true }
+    if isTeacherStack(t) { return true }
     if t.count <= 2, !["体育", "自习"].contains(t) { return true }
     let halfFragments: Set<String> = [
         "水利工", "程造价", "水利造", "价软件", "程造价软件",
@@ -124,6 +155,16 @@ for name in [
 
 for name in ["高等数学（上）", "大学英语（I）", "程序设计基础（C语言）", "体育（乒乓球）", "线性代数", "中国近现代史纲要"] {
     expect(!isBogusCourseName(name), "valid: \(name)")
+}
+
+// 偶数长度课名曾被 isTeacherStack 整段判成人名拼接而丢掉
+for name in ["水利工程造价", "水利造价软件应用", "操作系统原理", "数字信号处理", "机械制造基础", "工程造价管理", "自动控制原理", "水利工程造价二"] {
+    expect(!isTeacherStack(name), "not teacher stack: \(name)")
+    expect(!isBogusCourseName(name), "valid even-length course: \(name)")
+}
+for name in ["王芳陈伟孙丽", "李明王芳张伟", "李明李明"] {
+    expect(isTeacherStack(name), "teacher stack: \(name)")
+    expect(isBogusCourseName(name), "bogus teacher stack: \(name)")
 }
 
 // 超星确认页脏名
