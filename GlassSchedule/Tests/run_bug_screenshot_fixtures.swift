@@ -54,6 +54,20 @@ func isRoomOnlyName(_ t: String) -> Bool {
     return collapsed.range(of: #"^(?:[东南西北]?[\p{Han}]{0,8}?(?:楼|馆|教|室|区|院|中心|机房)[\p{Han}A-Za-z0-9\-－—]*\d{0,5}[A-Za-z0-9\-－—]*|体育馆|操场)$"#, options: .regularExpression) != nil
 }
 
+func looksLikePersonNameOnly(_ raw: String) -> Bool {
+    let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        .replacingOccurrences(of: "老师|教授", with: "", options: .regularExpression)
+    guard t.range(of: #"^[\p{Han}]{2,3}$"#, options: .regularExpression) != nil else { return false }
+    let continuations: Set<String> = [
+        "纲要", "基础", "原理", "概论", "导论", "教程", "实务", "设计", "分析", "统计",
+        "法治", "政策", "英语", "数学", "物理", "化学", "历史", "体育", "造价", "工程",
+        "软件", "实践", "实训", "听说", "综合", "实验",
+    ]
+    if continuations.contains(t) { return false }
+    let hints = ["大学", "高等", "数学", "英语", "物理", "体育", "程序", "线性", "思想", "中国", "形势", "数据", "概率", "离散", "计算", "创新", "实验", "造价", "水利", "软件", "自习", "课程", "工程", "历史", "道德", "法治", "代数", "信号", "数字", "电路", "机械", "管理", "网络", "结构", "系统", "控制", "材料", "测量", "会计", "遥感", "测绘", "制图", "营销", "处理", "制造", "自动", "信息", "通信", "电子", "建筑", "施工", "监理"]
+    return !hints.contains(where: { t.contains($0) })
+}
+
 func isTeacherStack(_ t: String) -> Bool {
     let compact = t.replacingOccurrences(of: #"\s+|老师|教授"#, with: "", options: .regularExpression)
     guard compact.count >= 4, compact.count <= 18 else { return false }
@@ -62,9 +76,18 @@ func isTeacherStack(_ t: String) -> Bool {
     if courseHints.contains(where: { compact.contains($0) }) { return false }
     if compact.count % 2 == 0 {
         let half = compact.count / 2
-        if String(compact.prefix(half)) == String(compact.suffix(half)) { return true }
+        if half >= 2, String(compact.prefix(half)) == String(compact.suffix(half)) { return true }
     }
-    return compact.count % 2 == 0 && compact.count >= 6
+    guard compact.count % 2 == 0, compact.count >= 6 else { return false }
+    var index = compact.startIndex
+    var people = 0
+    while index < compact.endIndex {
+        guard let next = compact.index(index, offsetBy: 2, limitedBy: compact.endIndex) else { return false }
+        guard looksLikePersonNameOnly(String(compact[index..<next])) else { return false }
+        people += 1
+        index = next
+    }
+    return people >= 3
 }
 
 func isBogusCourseName(_ raw: String) -> Bool {
@@ -117,6 +140,14 @@ for raw in screenshotBugs {
 // 折叠后的高等数学应合法
 expect(!isBogusCourseName(collapseRepeatedPhrase("高等数学（上）高等数学（上）高等数学（上）")),
        "折叠后高等数学合法")
+
+// 偶数汉字课名不是教师堆叠；三人名拼接仍是伪课名
+for name in ["水利工程造价", "水利造价软件应用", "操作系统原理", "数字信号处理", "机械制造基础"] {
+    expect(!isTeacherStack(name), "课名不是教师堆叠: \(name)")
+    expect(!isBogusCourseName(name), "偶数课名应保留: \(name)")
+}
+expect(isTeacherStack("王芳陈伟孙丽"), "王芳陈伟孙丽 是教师堆叠")
+expect(isBogusCourseName("王芳陈伟孙丽"), "王芳陈伟孙丽 不能当课名")
 
 // 同名不同天必须保留两条
 let k1 = dedupeKey(name: "高等数学（上）", weekday: 1, start: 1, end: 2, room: "教一楼302")

@@ -121,7 +121,10 @@ enum OCRCleanup {
         if courseContinuations.contains(t) { return false }
         let courseHints = ["大学", "高等", "数学", "英语", "物理", "体育", "程序", "线性", "思想", "中国",
                            "形势", "数据", "概率", "离散", "计算", "创新", "实验", "造价", "水利",
-                           "软件", "自习", "课程", "工程", "历史", "道德", "法治", "代数"]
+                           "软件", "自习", "课程", "工程", "历史", "道德", "法治", "代数",
+                           "信号", "数字", "电路", "机械", "管理", "网络", "结构", "系统", "控制",
+                           "材料", "测量", "会计", "遥感", "测绘", "制图", "营销", "处理", "制造",
+                           "自动", "信息", "通信", "电子", "建筑", "施工", "监理"]
         if courseHints.contains(where: { t.contains($0) }) { return false }
         return true
     }
@@ -208,6 +211,8 @@ enum OCRCleanup {
         return false
     }
 
+    /// 人名拼接，例如「王芳陈伟孙丽」「李明李明」。
+    /// 不能把所有偶数长度的汉字都当成教师：那会丢掉「水利工程造价」「数字信号处理」这类课名。
     static func isTeacherStack(_ t: String) -> Bool {
         let compact = t.replacingOccurrences(of: #"\s+|老师|教授"#, with: "", options: .regularExpression)
         guard compact.count >= 4, compact.count <= 18 else { return false }
@@ -216,10 +221,20 @@ enum OCRCleanup {
         if courseHints.contains(where: { compact.contains($0) }) { return false }
         if compact.count % 2 == 0 {
             let half = compact.count / 2
-            if String(compact.prefix(half)) == String(compact.suffix(half)) { return true }
+            if half >= 2, String(compact.prefix(half)) == String(compact.suffix(half)) { return true }
         }
-        if compact.count % 2 == 0, compact.count >= 6 { return true }
-        return false
+        // 「王芳陈伟孙丽」：按 2 字切开，且每一段都像人名。仅「能被 2 整除」不够。
+        guard compact.count % 2 == 0, compact.count >= 6 else { return false }
+        var index = compact.startIndex
+        var people = 0
+        while index < compact.endIndex {
+            guard let next = compact.index(index, offsetBy: 2, limitedBy: compact.endIndex) else { return false }
+            let token = String(compact[index..<next])
+            guard looksLikePersonNameOnly(token) else { return false }
+            people += 1
+            index = next
+        }
+        return people >= 3
     }
 
     private static func isWeekOrRoomFragment(_ t: String) -> Bool {
