@@ -39,7 +39,6 @@ enum ScheduleImporter {
         let layout = TextExtractor.layoutDescription(document.items)
         let rowsText = Set(document.items.map(\.page)).sorted()
             .flatMap { page in LayoutRows.group(document.items.filter { $0.page == page }) }
-            // 横排列表必须保留空格，否则「高等数学 张伟 理教楼」会粘成一团
             .map { row in
                 if row.count >= 3 { return row.map(\.text).joined(separator: " ") }
                 return OCRTextJoiner.join(row.map(\.text))
@@ -49,13 +48,10 @@ enum ScheduleImporter {
         let aiInput = [layout, document.items.isEmpty ? document.plainText : ""].filter { !$0.isEmpty }.joined(separator: "\n")
 
         let detectedWeek = TeachingWeekDetector.currentWeek(in: plain)
-        // 顶栏「第13周 (本周)」→ 对齐学期第 1 周起点，避免周数显示偏差
         if let week = detectedWeek,
            let start = SemesterCalendar.semesterStart(forTeachingWeek: week) {
             let shown = SemesterCalendar.weekNumber(of: .now, semesterStart: SharedSettings.semesterStart)
-            if shown != week {
-                SharedSettings.semesterStart = start
-            }
+            if shown != week { SharedSettings.semesterStart = start }
         }
 
         let ruleDrafts = ruleBasedDrafts(items: document.items, plain: plain, slots: slots)
@@ -64,8 +60,6 @@ enum ScheduleImporter {
             && ruleDrafts.filter { !$0.classroom.isEmpty }.count >= max(1, ruleDrafts.count / 2)
 
         var aiDrafts: [CourseDraft] = []
-        // 超星网格规则已经很完整时，跳过 AI，避免「程造价 / 编造周次」污染
-        // 无 Apple 智能时仅走本地 Vision OCR + 规则，仍可识别网格课表
         if !strongGrid, SharedSettings.useAppleIntelligence && AIScheduleExtractor.isAvailable && !aiInput.isEmpty {
             do {
                 aiDrafts = try await AIScheduleExtractor.extract(from: aiInput, slots: slots)
@@ -101,7 +95,6 @@ enum ScheduleImporter {
             engine = .appleIntelligence
         }
 
-        // 默认：有格子周次（含单双周）则保留；否则截图「第 N 周」只挂该周
         var scoped = drafts.filter(isAcceptableDraft)
         let scope = ImportWeekScope.defaultScope(detectedWeek: detectedWeek,
                                                  hasPerCourseWeeks: scoped.contains { !$0.weeks.isEmpty })
@@ -110,14 +103,9 @@ enum ScheduleImporter {
     }
 
     /// 把周次范围写回草稿。
-    /// - overwriteExplicit: false 时保留格子里已写明的周次（如 1-8,10-16 / 单周）；true 时按用户选择覆盖。
-    /// - autoDetected：始终不改已有周次；仅给完全空白的课填「每周」(空数组)。
     static func applyWeekScope(_ scope: ImportWeekScope, detectedWeek: Int?, to drafts: inout [CourseDraft],
                                overwriteExplicit: Bool = false) {
-        if scope == .autoDetected {
-            // 保留识别结果；空白周次保持空白（表示每周）
-            return
-        }
+        if scope == .autoDetected { return }
         let weeks = scope.weeks(detectedWeek: detectedWeek)
         for index in drafts.indices {
             if !overwriteExplicit, !drafts[index].weeks.isEmpty { continue }
@@ -126,13 +114,15 @@ enum ScheduleImporter {
     }
 
     private static func ruleBasedDrafts(items: [TextItem], plain: String, slots: [PeriodSlot]) -> [CourseDraft] {
-        // 三种版式并行：列表横排、网格、时间轴；取质量最高者，必要时少量合并补全
+        // 四种版式并行：星期列网格、星期行网格、列表、时间轴；分别解析后按质量选优。
+        let horizontal = HorizontalGridParser.parse(items, slots: slots)
         let list = ListScheduleParser.parse(items, slots: slots)
         let grid = GridHeuristicParser.parse(items, slots: slots)
         let timeline = TimelineScheduleParser.parse(items, slots: slots)
         let lines = LineHeuristicParser.parse(plain, slots: slots)
 
         let candidates = [
+            ("horizontal", horizontal),
             ("list", list),
             ("grid", grid),
             ("timeline", timeline),
@@ -147,11 +137,16 @@ enum ScheduleImporter {
                         && $0.classroom.range(of: #"\d{3,}"#, options: .regularExpression) != nil
                         && $0.name.count >= 4
                 }.count
-                // 无节次的脏 lines 大幅降权，避免抢走网格/列表
+
                 if pair.0 == "lines" {
                     let withPeriod = clean.filter { $0.startPeriod > 0 }.count
                     score = withPeriod * 3
                     if withPeriod < 3 { score = min(score, 2) }
+                }
+                if pair.0 == "horizontal", clean.count >= 2 {
+                    score += 14
+                    score += clean.filter { $0.startPeriod > 0 || $0.endMinutes > $0.startMinutes }.count * 2
+                    score += clean.filter { !$0.classroom.isEmpty }.count * 2
                 }
                 if pair.0 == "grid" {
                     if clean.count >= 2 {
@@ -159,31 +154,29 @@ enum ScheduleImporter {
                         score += clean.filter { $0.startPeriod > 0 }.count * 2
                         score += 12
                     }
-                    // 超星「课名@教室」网格：绝对优先，防止 list/lines 残片污染
                     if atRoomCount >= 2 { score += 40 }
                 }
                 if pair.0 == "list", clean.count >= 3 {
                     score += clean.filter { $0.startPeriod > 0 || $0.endMinutes > $0.startMinutes }.count * 2
                     score += 10
-                    if atRoomCount == 0 { /* keep */ } else { score -= 20 }
+                    if atRoomCount > 0 { score -= 20 }
                 }
-                if pair.0 == "timeline", clean.count >= 3 {
-                    score += 10
-                }
+                if pair.0 == "timeline", clean.count >= 3 { score += 10 }
                 return (pair.0, clean, score)
             }
             .sorted { $0.2 > $1.2 }
 
         guard let best = ranked.first, best.2 > 0, !best.1.isEmpty else {
-            return dedupe((list + grid + timeline).filter(isAcceptableDraft))
+            return dedupe((horizontal + list + grid + timeline).filter(isAcceptableDraft))
         }
 
         var drafts = best.1
-        let bestIsAtRoomGrid = best.0 == "grid" && best.1.filter {
-            !$0.classroom.isEmpty && $0.name.count >= 4
-        }.count >= 2
-        // 超星 @教室 网格已完整时不再合并其他版式（曾把「程造价软件」等残片拼进来）
-        if !bestIsAtRoomGrid,
+        let bestIsSpatialGrid = best.0 == "horizontal"
+            || (best.0 == "grid" && best.1.filter {
+                !$0.classroom.isEmpty && $0.name.count >= 4
+            }.count >= 2)
+        // 完整网格结果不再与其他版式合并，避免跨列残片污染课名。
+        if !bestIsSpatialGrid,
            let second = ranked.dropFirst().first,
            second.0 != "lines", best.0 != "lines",
            second.2 >= best.2 / 2, !second.1.isEmpty {
@@ -221,9 +214,7 @@ enum ScheduleImporter {
             if draft.startPeriod >= 1, draft.endPeriod >= draft.startPeriod { s += 4 }
             if draft.endMinutes > draft.startMinutes { s += 2 }
             if let mapped = PeriodTable.periods(startMinutes: draft.startMinutes, endMinutes: draft.endMinutes, in: SharedSettings.periodSlots),
-               mapped.0 == draft.startPeriod, mapped.1 == draft.endPeriod {
-                s += 3
-            }
+               mapped.0 == draft.startPeriod, mapped.1 == draft.endPeriod { s += 3 }
             return score + max(0, s)
         }
     }
@@ -234,10 +225,7 @@ enum ScheduleImporter {
             guard let match = secondary.first(where: { similar($0, result[index]) }) else { continue }
             if result[index].classroom.isEmpty { result[index].classroom = match.classroom }
             if result[index].teacher.isEmpty { result[index].teacher = match.teacher }
-            // 网格课表格子常无周次；空 = 每周。不要用 AI 编造的 1-8,10-16 覆盖。
-            if fillWeeks, result[index].weeks.isEmpty, !match.weeks.isEmpty {
-                result[index].weeks = match.weeks
-            }
+            if fillWeeks, result[index].weeks.isEmpty, !match.weeks.isEmpty { result[index].weeks = match.weeks }
             if result[index].name.count < match.name.count, !match.name.contains("@"), match.name.count >= 4 {
                 result[index].name = match.name
             }
@@ -264,8 +252,8 @@ enum ScheduleImporter {
     }
 
     private static func namesSimilar(_ a: String, _ b: String) -> Bool {
-        let left = a.replacingOccurrences(of: "\\s", with: "", options: .regularExpression)
-        let right = b.replacingOccurrences(of: "\\s", with: "", options: .regularExpression)
+        let left = a.replacingOccurrences(of: #"\s"#, with: "", options: .regularExpression)
+        let right = b.replacingOccurrences(of: #"\s"#, with: "", options: .regularExpression)
         if left.isEmpty || right.isEmpty { return false }
         if left == right || left.contains(right) || right.contains(left) { return true }
         return left.prefix(2) == right.prefix(2) && abs(left.count - right.count) <= 6
