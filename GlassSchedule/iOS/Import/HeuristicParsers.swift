@@ -40,8 +40,9 @@ enum OCRTextJoiner {
 }
 
 private enum Patterns {
-    /// 超星 / 教务常见：课程名@教室号
-    static let atRoom = try! NSRegularExpression(pattern: "^(.+?)@([A-Za-z0-9\\-－]{2,12})$")
+    /// 超星 / 教务常见：课程名@教室号（教室可为 3–5 位，允许中间被 OCR 拆开后再拼）
+    static let atRoom = try! NSRegularExpression(pattern: "(.+?)@([A-Za-z0-9\\-－]{1,12})")
+    static let atRoomAnchored = try! NSRegularExpression(pattern: "^(.+?)@([A-Za-z0-9\\-－]{1,12})$")
     static let periodRange = try! NSRegularExpression(
         pattern: "(?:第\\s*)?(\\d{1,2})\\s*(?:[-－—~～至到,，]\\s*(\\d{1,2}))?\\s*节"
     )
@@ -237,7 +238,8 @@ private struct CellFields {
 
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        if let m = Patterns.firstMatch(Patterns.atRoom, in: text),
+        if let m = Patterns.firstMatch(Patterns.atRoomAnchored, in: text)
+            ?? Patterns.firstMatch(Patterns.atRoom, in: text),
            let course = Patterns.string(m, group: 1, in: text),
            let room = Patterns.string(m, group: 2, in: text) {
             name = course
@@ -392,20 +394,26 @@ enum GridHeuristicParser {
         let colBounds = columnBounds(sortedCols)
         let leftBoundary = colBounds.map(\.value.lowerBound).min() ?? (sortedCols[0].x - 0.06)
 
-        let detectedBands = detectPeriodBands(in: items, leftBoundary: leftBoundary, headerBottom: headerBottom)
-        let bandDrafts = parseByBands(items: items, colBounds: colBounds, bands: detectedBands,
-                                      headerBottom: headerBottom, slots: slots)
-        // 超星等：左侧无清晰「第1-2节」时，按列内竖向课块解析（课程@教室）
+        // 超星课表特征：格子里是「课程@教室号」
+        let atRoomHits = items.filter { $0.text.contains("@") }.count
         let blockDrafts = parseByColumnBlocks(items: items, columns: columns, colBounds: colBounds,
                                               headerBottom: headerBottom, leftBoundary: leftBoundary, slots: slots)
 
-        let bandScore = bandDrafts.filter { $0.canCommit || !$0.classroom.isEmpty }.count
-        let blockScore = blockDrafts.filter { $0.canCommit || !$0.classroom.isEmpty || $0.name.contains("@") }.count
-        if bandScore >= blockScore, !bandDrafts.isEmpty {
-            return bandDrafts
+        // 有 @ 时一律走列内课块，绝不用「第 N 节」带把 @231 后的 3 吃掉、也避免单节带漏课
+        if atRoomHits >= 1, !blockDrafts.isEmpty {
+            return blockDrafts
         }
+
+        let detectedBands = detectPeriodBands(in: items, leftBoundary: leftBoundary, headerBottom: headerBottom)
+        let bandDrafts = parseByBands(items: items, colBounds: colBounds, bands: detectedBands,
+                                      headerBottom: headerBottom, slots: slots)
+
+        let bandScore = bandDrafts.filter { $0.canCommit || !$0.classroom.isEmpty }.count
+        let blockScore = blockDrafts.filter { $0.canCommit || !$0.classroom.isEmpty }.count
+        if blockScore > bandScore, !blockDrafts.isEmpty { return blockDrafts }
+        if bandScore > 0, !bandDrafts.isEmpty { return bandDrafts }
         if !blockDrafts.isEmpty { return blockDrafts }
-        // 节次带猜测回退
+
         let guessed = guessedPeriodBands(from: items, leftBoundary: leftBoundary, headerBottom: headerBottom, slots: slots)
         return parseByBands(items: items, colBounds: colBounds, bands: guessed,
                             headerBottom: headerBottom, slots: slots)
@@ -437,11 +445,22 @@ enum GridHeuristicParser {
                                             headerBottom: CGFloat, leftBoundary: CGFloat,
                                             slots: [PeriodSlot]) -> [CourseDraft] {
         let rowCenters = detectPeriodRowCenters(in: items, leftBoundary: leftBoundary, headerBottom: headerBottom)
-        var drafts: [CourseDraft] = []
-        for (day, xRange) in colBounds {
-            let columnItems = items.filter {
-                $0.rect.minY >= headerBottom - 0.004 && xRange.contains($0.rect.midX)
+        let sortedCols = columns.map { (day: $0.key, x: $0.value.x) }.sorted { $0.x < $1.x }
+        let centers = sortedCols.map(\.x)
+        let spacing = zip(centers, centers.dropFirst()).map { $1 - $0 }.min() ?? 0.12
+
+        // 最近列归属（比中点闭区间更不容易漏掉偏左/偏右的课块文字）
+        var byWeekday: [Int: [TextItem]] = [:]
+        for item in items where item.rect.minY >= headerBottom - 0.004 && item.rect.midX >= leftBoundary - 0.02 {
+            guard let nearest = sortedCols.min(by: { abs($0.x - item.rect.midX) < abs($1.x - item.rect.midX) }) else {
+                continue
             }
+            if abs(nearest.x - item.rect.midX) > spacing * 0.62 { continue }
+            byWeekday[nearest.day, default: []].append(item)
+        }
+
+        var drafts: [CourseDraft] = []
+        for (day, columnItems) in byWeekday {
             let blocks = verticalBlocks(from: columnItems)
             for (blockIndex, block) in blocks.enumerated() {
                 let nextTop = blockIndex + 1 < blocks.count ? blocks[blockIndex + 1].map(\.rect.minY).min() : nil
@@ -458,24 +477,20 @@ enum GridHeuristicParser {
     private static func draftFromCell(_ cellItems: [TextItem], day: Int, periods: (Int, Int)?,
                                       slots: [PeriodSlot], allowAtRoom: Bool = false) -> CourseDraft? {
         guard !cellItems.isEmpty else { return nil }
-        let lines = OCRCleanup.dedupeLines(cellItems.sorted { $0.rect.minY < $1.rect.minY }.map(\.text))
-        let contentLines = lines.filter { line in
-            Patterns.firstMatch(Patterns.rowLabel, in: line) == nil
+        let rawLines = OCRCleanup.dedupeLines(cellItems.sorted { $0.rect.minY < $1.rect.minY }.map(\.text))
+        // 超星：先粘合「@231」+「3」→「@2313」，绝不能把尾数当节次丢掉
+        if allowAtRoom {
+            return draftFromChaoxingCell(rawLines, day: day, periods: periods, slots: slots)
+        }
+
+        let contentLines = rawLines.filter { line in
+            !isCellPeriodNoise(line)
                 && line.range(of: #"^\d{1,2}[:：]\d{2}([-－—~～]\d{1,2}[:：]\d{2})?$"#, options: .regularExpression) == nil
                 && line.range(of: #"^\d{1,2}/\d{1,2}$"#, options: .regularExpression) == nil
         }
         guard !contentLines.isEmpty else { return nil }
 
         var fields = CellFields(lines: contentLines)
-        fields.name = OCRCleanup.sanitizeCourseName(fields.name)
-        // 超星 name@room
-        if allowAtRoom, fields.name.contains("@"),
-           let m = Patterns.firstMatch(Patterns.atRoom, in: fields.name),
-           let course = Patterns.string(m, group: 1, in: fields.name),
-           let room = Patterns.string(m, group: 2, in: fields.name) {
-            fields.name = course
-            if fields.classroom.isEmpty { fields.classroom = room }
-        }
         fields.name = OCRCleanup.sanitizeCourseName(fields.name)
         fields.classroom = OCRCleanup.sanitizeClassroom(fields.classroom)
         fields.teacher = OCRCleanup.sanitizeTeacher(fields.teacher)
@@ -494,6 +509,66 @@ enum GridHeuristicParser {
             draft.startPeriod = p.0; draft.endPeriod = max(p.0, p.1)
         }
         if let t = fields.times { draft.startMinutes = t.0; draft.endMinutes = t.1 }
+        draft.complete(with: slots, preferPeriods: true)
+        return draft.isValid ? draft : nil
+    }
+
+    /// 单元格内的节次噪声：必须带「节」或「1-2」形式；裸数字「3」可能是教室号尾部，保留。
+    private static func isCellPeriodNoise(_ line: String) -> Bool {
+        let t = line.trimmingCharacters(in: .whitespaces)
+        if t.contains("节") {
+            return Patterns.firstMatch(Patterns.rowLabel, in: t) != nil
+        }
+        return t.range(of: #"^\d{1,2}\s*[-－—~～]\s*\d{1,2}$"#, options: .regularExpression) != nil
+    }
+
+    private static func draftFromChaoxingCell(_ rawLines: [String], day: Int, periods: (Int, Int)?,
+                                              slots: [PeriodSlot]) -> CourseDraft? {
+        // 去掉日期表头碎片，但保留纯数字（教室尾号）
+        let lines = rawLines.filter { line in
+            line.range(of: #"^\d{1,2}/\d{1,2}$"#, options: .regularExpression) == nil
+                && !line.contains("今天")
+                && Patterns.firstMatch(Patterns.junkName, in: line) == nil
+        }
+        guard !lines.isEmpty else { return nil }
+
+        let glued = OCRTextJoiner.join(lines)
+        var name = ""
+        var classroom = ""
+
+        if let m = Patterns.firstMatch(Patterns.atRoom, in: glued),
+           let course = Patterns.string(m, group: 1, in: glued),
+           let room = Patterns.string(m, group: 2, in: glued) {
+            name = course
+            classroom = room
+            // 若 @ 后仍有落单数字被拼在尾巴外，再吸一次
+            let after = (glued as NSString).replacingCharacters(in: m.range, with: " ")
+            if let extra = after.range(of: #"^\s*(\d{1,3})\b"#, options: .regularExpression) {
+                let digits = String(after[extra]).trimmingCharacters(in: .whitespaces)
+                if classroom.count + digits.count <= 6 { classroom += digits }
+            }
+        } else {
+            // 无 @ 时：课名 + 尾部数字当教室
+            var parts = lines
+            if let last = parts.last, last.allSatisfy(\.isNumber), last.count >= 3 {
+                classroom = parts.removeLast()
+            }
+            name = OCRTextJoiner.join(parts)
+        }
+
+        name = OCRCleanup.sanitizeCourseName(name)
+            .replacingOccurrences(of: #"@.+$"#, with: "", options: .regularExpression)
+        classroom = OCRCleanup.sanitizeClassroom(classroom)
+
+        guard name.count >= 2 else { return nil }
+        guard !OCRCleanup.isBogusCourseName(name) else { return nil }
+        guard Patterns.firstMatch(Patterns.junkName, in: name) == nil else { return nil }
+
+        var draft = CourseDraft(name: name, classroom: classroom, teacher: "", weekday: day, weeks: [])
+        if let p = periods, p.0 > 0 {
+            draft.startPeriod = p.0
+            draft.endPeriod = max(p.0, p.1)
+        }
         draft.complete(with: slots, preferPeriods: true)
         return draft.isValid ? draft : nil
     }
@@ -630,16 +705,34 @@ enum GridHeuristicParser {
 
     private static func detectWeekdayColumns(in items: [TextItem]) -> [Int: Column] {
         var columns: [Int: Column] = [:]
-        let headerItems = items.sorted { $0.rect.minY < $1.rect.minY }.prefix(max(20, items.count / 4))
+        let headerItems = items.filter { $0.rect.midY < 0.28 }
+
+        // 先收集纯日期碎片，供「今天」列就近对齐
+        let datePins: [(x: CGFloat, weekday: Int, maxY: CGFloat)] = headerItems.compactMap { item in
+            let text = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let m = Patterns.firstMatch(Patterns.dateHeader, in: text),
+                  let month = Patterns.string(m, group: 1, in: text).flatMap(Int.init),
+                  let day = Patterns.string(m, group: 2, in: text).flatMap(Int.init),
+                  let weekday = weekdayFrom(month: month, day: day) else { return nil }
+            return (item.rect.midX, weekday, item.rect.maxY)
+        }
+
         for item in headerItems {
             let text = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard item.rect.midY < 0.28 else { continue }
-            // 「今天 11/23」「周二 11/24」——日期推星期优先，避免「今天」按导入当天错位
             var weekday: Int?
             if let m = Patterns.firstMatch(Patterns.dateHeader, in: text),
                let month = Patterns.string(m, group: 1, in: text).flatMap(Int.init),
                let day = Patterns.string(m, group: 2, in: text).flatMap(Int.init) {
                 weekday = weekdayFrom(month: month, day: day)
+            }
+            if weekday == nil, text.contains("今天") {
+                // 「今天」与「11/24」被拆成两段时，取最近日期钉
+                if let pin = datePins.min(by: { abs($0.x - item.rect.midX) < abs($1.x - item.rect.midX) }),
+                   abs(pin.x - item.rect.midX) < 0.1 {
+                    weekday = pin.weekday
+                } else {
+                    weekday = SemesterCalendar.weekday(of: .now)
+                }
             }
             if weekday == nil {
                 weekday = WeekdayName.detect(in: text, allowBare: true)
@@ -652,8 +745,11 @@ enum GridHeuristicParser {
                 columns[weekday] = Column(x: existing!.x, bottom: max(existing!.bottom, item.rect.maxY))
             }
         }
+        // 日期钉补列（仅有 11/24 无「周二」文字时）
+        for pin in datePins where columns[pin.weekday] == nil {
+            columns[pin.weekday] = Column(x: pin.x, bottom: pin.maxY)
+        }
         if columns.count < 3 {
-            // 回退：上半区聚类 x，从今天起连续映射
             let top = items.filter { $0.rect.midY < 0.22 }
             var xs: [CGFloat] = []
             for x in top.map(\.rect.midX).sorted() {
@@ -682,8 +778,8 @@ enum GridHeuristicParser {
         return SemesterCalendar.weekday(of: date)
     }
 
-    /// 同一天、同名同教室且节次相连时，只合并「被拆碎的同一大节」。
-    /// 例如 OCR 把第 1、2 节拆成两条 → 合成 1-2；但超星里 1-2 与 3-4 是两格，保持分开，不合成 1-4。
+    /// 同一天、同名、教室兼容且节次相连时合并。
+    /// 超星常见 1-2 与 3-4 两格同课 → 合成 1-4；教室「231」与「2313」视为同一间（取更长）。
     private static func mergeAdjacent(_ drafts: [CourseDraft], slots: [PeriodSlot]) -> [CourseDraft] {
         let sorted = drafts.sorted { ($0.weekday, $0.startPeriod, $0.startMinutes) < ($1.weekday, $1.startPeriod, $1.startMinutes) }
         var result: [CourseDraft] = []
@@ -691,14 +787,15 @@ enum GridHeuristicParser {
             if var last = result.last,
                last.weekday == draft.weekday,
                last.name == draft.name,
-               last.classroom == draft.classroom,
+               roomsCompatible(last.classroom, draft.classroom),
                draft.startPeriod == last.endPeriod + 1 {
-                let lastSpan = last.endPeriod - last.startPeriod + 1
-                let draftSpan = draft.endPeriod - draft.startPeriod + 1
-                // 合并后总跨度不超过 2 节（一大节），避免把 1-2 与 3-4 粘成 1-4
-                if lastSpan + draftSpan <= 2 {
+                let mergedSpan = draft.endPeriod - last.startPeriod + 1
+                // 超星一大段最多 4 节（两格）；普通课表一大节 2 节
+                let limit = (last.classroom.contains(where: \.isNumber) || draft.classroom.contains(where: \.isNumber)) ? 4 : 2
+                if mergedSpan <= limit {
                     last.endPeriod = draft.endPeriod
                     last.endMinutes = max(last.endMinutes, draft.endMinutes)
+                    if last.classroom.count < draft.classroom.count { last.classroom = draft.classroom }
                     if last.weeks.isEmpty { last.weeks = draft.weeks }
                     last.complete(with: slots, preferPeriods: true)
                     result[result.count - 1] = last
@@ -708,6 +805,14 @@ enum GridHeuristicParser {
             result.append(draft)
         }
         return result
+    }
+
+    private static func roomsCompatible(_ a: String, _ b: String) -> Bool {
+        if a == b { return true }
+        if a.isEmpty || b.isEmpty { return true }
+        let x = a.replacingOccurrences(of: #"\s+"#, with: "", options: .regularExpression)
+        let y = b.replacingOccurrences(of: #"\s+"#, with: "", options: .regularExpression)
+        return x == y || x.hasPrefix(y) || y.hasPrefix(x)
     }
 }
 
