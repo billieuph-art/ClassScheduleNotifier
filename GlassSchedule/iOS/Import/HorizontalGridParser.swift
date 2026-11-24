@@ -30,8 +30,10 @@ enum HorizontalGridParser {
         guard items.count >= 4 else { return [] }
         let dayItems = items.compactMap { item -> (Int, TextItem)? in
             let text = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard text.count <= 10,
-                  let day = WeekdayName.detect(in: text, allowBare: false) else { return nil }
+            guard text.count <= 10 else { return nil }
+            let day = WeekdayName.detect(in: text, allowBare: false)
+                ?? (text.count == 1 ? WeekdayName.detect(in: text, allowBare: true) : nil)
+            guard let day else { return nil }
             return (day, item)
         }
         guard dayItems.count >= 2 else { return [] }
@@ -356,8 +358,9 @@ enum HorizontalGridParser {
     }
 
     private static func isDayLabel(_ text: String) -> Bool {
-        WeekdayName.detect(in: text, allowBare: false) != nil
-            && text.count <= 10
+        guard text.count <= 10 else { return false }
+        return WeekdayName.detect(in: text, allowBare: false) != nil
+            || (text.count == 1 && WeekdayName.detect(in: text, allowBare: true) != nil)
     }
 
     private static func deduplicate(_ drafts: [CourseDraft]) -> [CourseDraft] {
