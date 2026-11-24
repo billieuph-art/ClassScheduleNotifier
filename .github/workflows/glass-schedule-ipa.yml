@@ -146,23 +146,25 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: glass-schedule-sideload-${{ github.run_number }}
-          name: Classio 侧载版 IPA ${{ github.run_number }}（v1.0.21）
+          name: Classio 侧载版 IPA ${{ github.run_number }}（v1.0.22）
           target_commitish: ${{ github.sha }}
           prerelease: true
           files: |
             GlassSchedule/GlassSchedule-sideload.ipa
             GlassSchedule/GlassSchedule-sideload-lite.ipa
           body: |
-            ## Classio 侧载专用包（v1.0.21）
+            ## Classio 侧载专用包（v1.0.22）
 
-            ### 本版（超星课表识别）
-            - 修复周一/周二竖排「水利工+程造价+二@231+3」串列、碎成缺节次残片
-            - 教室尾号粘合：@231+3→2313、@121+6→1216、@220+9→2209、@2+212→2212
-            - 同列 1-2/3-4 两格同课合并为 1-4；拒绝无 @教室 的半截课名进确认页
-            - 超星 @教室 网格结果不再被 list/lines 残片污染
+            ### 本版（多版式课表识别）
+            - 新增「星期在左侧按行排列、节次在顶部按列排列」的横向课表解析，同时保留星期列式和超星竖排识别
+            - 按单元格空间位置关联课程名称、教师、教室、周次和节次/时间，减少横纵版式错位
+            - 支持教师与课程名同一行、教室楼栋与门牌拆行、纯数字门牌及单字星期表头
+            - 缺少可靠时间时不猜测时间；不完整项目保留在导入确认流程中，不会静默写入
 
             ### 安装
-            1. **优先 `GlassSchedule-sideload-lite.ipa`**
-            2. 先删旧 Classio 再装；需要 **iOS 26+**
+            1. **需要灵动岛实时活动和小组件时，使用 `GlassSchedule-sideload.ipa`（完整版，保留扩展）**
+            2. `GlassSchedule-sideload-lite.ipa` 会移除 PlugIns 扩展，兼容性更高，但小组件/实时活动可能不可用
+            3. 需要通过 Sideloadly 等侧载工具重签安装；最低要求 **iOS 26+**
+            4. 如安装器要求先卸载旧版，请先备份课表数据再操作
 
             Bundle ID：`com.billieuphart.glassschedule`
