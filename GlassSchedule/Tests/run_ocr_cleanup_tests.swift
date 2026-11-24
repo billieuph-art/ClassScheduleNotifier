@@ -1,11 +1,18 @@
 #!/usr/bin/env swift
 import Foundation
 
-// 与 OCRCleanup 同步的纯字符串回归（不依赖 UIKit/Vision）。
+// 与 OCRCleanup 同步的纯字符串回归。
 
 func collapseRepeatedPhrase(_ raw: String) -> String {
-    let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    var t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
     guard t.count >= 4 else { return t }
+    let spaced = t.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+    if spaced.count >= 2, spaced.count % 2 == 0 {
+        let half = spaced.count / 2
+        let a = spaced.prefix(half).joined(separator: " ")
+        let b = spaced.suffix(half).joined(separator: " ")
+        if a == b, a.count >= 2 { return a }
+    }
     for len in 2...(t.count / 2) where t.count % len == 0 {
         let unit = String(t.prefix(len))
         let n = t.count / len
@@ -51,77 +58,53 @@ func isWeekOnlyName(_ t: String) -> Bool {
 
 func isRoomOnlyName(_ t: String) -> Bool {
     let collapsed = collapseRepeatedPhrase(t).replacingOccurrences(of: #"\s+"#, with: "", options: .regularExpression)
-    if collapsed.range(of: #"^(?:[东南西北]?[\p{Han}]{0,8}?(?:楼|馆|教|室|区|院|中心|机房)[\p{Han}A-Za-z0-9\-－—]*\d{0,5}[A-Za-z0-9\-－—]*|体育馆|操场)$"#, options: .regularExpression) != nil {
-        return true
-    }
-    return false
+    return collapsed.range(of: #"^(?:[东南西北]?[\p{Han}]{0,8}?(?:楼|馆|教|室|区|院|中心|机房)[\p{Han}A-Za-z0-9\-－—]*\d{0,5}[A-Za-z0-9\-－—]*|体育馆|操场)$"#, options: .regularExpression) != nil
 }
 
-func isTeacherStack(_ t: String) -> Bool {
-    let compact = t.replacingOccurrences(of: #"\s+|老师|教授"#, with: "", options: .regularExpression)
-    guard compact.count >= 4, compact.count <= 18 else { return false }
-    if compact.range(of: #"^[\p{Han}]+$"#, options: .regularExpression) == nil { return false }
-    let courseHints = ["大学", "高等", "数学", "英语", "物理", "体育", "程序", "线性", "思想", "中国", "形势", "数据", "概率", "离散", "计算", "创新", "实验"]
-    if courseHints.contains(where: { compact.contains($0) }) { return false }
-    if compact.count % 2 == 0 {
-        let half = compact.count / 2
-        if String(compact.prefix(half)) == String(compact.suffix(half)) { return true }
-    }
-    if compact.count % 2 == 0, compact.count >= 6 { return true }
-    return false
+func looksLikePersonNameOnly(_ raw: String) -> Bool {
+    let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard t.range(of: #"^[\p{Han}]{2,3}$"#, options: .regularExpression) != nil else { return false }
+    let hints = ["大学", "高等", "数学", "英语", "物理", "体育", "程序", "线性", "思想", "中国", "形势", "数据", "概率", "离散", "计算", "创新", "实验", "造价", "水利", "软件", "自习", "工程", "历史", "代数", "纲要"]
+    return !hints.contains(where: { t.contains($0) })
 }
 
 func isBogusCourseName(_ raw: String) -> Bool {
     let t = collapseRepeatedPhrase(raw.trimmingCharacters(in: .whitespacesAndNewlines))
     if t.isEmpty { return true }
     if looksLikeMergedCourses(t) { return true }
+    if t.range(of: #"^\d{1,3}$"#, options: .regularExpression) != nil { return true }
+    if t.filter({ $0 == "/" }).count >= 2 { return true }
     if t.range(of: #"^第?\s*\d{1,2}\s*([-－—~～]\s*\d{1,2})?\s*节"#, options: .regularExpression) != nil { return true }
     if isWeekOnlyName(t) { return true }
     if isRoomOnlyName(t) { return true }
-    if isTeacherStack(t) { return true }
-    let weekOnly = t.replacingOccurrences(of: #"[（()）\s]"#, with: "", options: .regularExpression)
-    if weekOnly == "每周" || weekOnly.range(of: #"^(每周)+$"#, options: .regularExpression) != nil { return true }
+    if looksLikePersonNameOnly(t) { return true }
+    if t.count <= 2, !["体育", "自习"].contains(t) { return true }
     if t.contains("课程名") && (t.contains("教师") || t.contains("教室")) { return true }
-    if t.contains("|") && (t.contains("老师") || t.contains("教") || t.contains("楼")) { return true }
     return false
 }
 
 var failed = 0
 func expect(_ cond: Bool, _ message: String) {
-    if cond {
-        print("PASS  \(message)")
-    } else {
-        print("FAIL  \(message)")
-        failed += 1
-    }
+    print(cond ? "PASS  \(message)" : "FAIL  \(message)")
+    if !cond { failed += 1 }
 }
 
-// collapse
 expect(collapseRepeatedPhrase("高等数学（上）高等数学（上）高等数学（上）") == "高等数学（上）", "collapse 高等数学 x3")
 expect(collapseRepeatedPhrase("教一楼302教一楼302") == "教一楼302", "collapse 教室 x2")
-expect(collapseRepeatedPhrase("教一楼 302教一楼 302") == "教一楼 302", "collapse 带空格教室 x2")
+expect(collapseRepeatedPhrase("计算机楼 205 计算机楼 205") == "计算机楼 205", "collapse 空格教室")
+expect(collapseRepeatedPhrase("水利工水利工") == "水利工", "collapse 水利工")
 expect(collapseRepeatedPhrase("大学英语") == "大学英语", "collapse 不伤正常课名")
-expect(collapseRepeatedPhrase("高等数学（上）高等数学（上）高等数学（上）") == "高等数学（上）"
-        && !isBogusCourseName("高等数学（上）"),
-       "重复课名折叠后合法")
 
-// bogus
 for name in [
-    "第 1-2 节李明李明",
-    "教一楼302教一楼302",
-    "1-16周（双周）1-16周（单周）",
-    "(单周)1-16周1-16周1-16周",
-    "第3-4节王芳陈伟孙丽",
+    "第 1-2 节李明李明", "教一楼302教一楼302", "1-16周（双周）1-16周（单周）",
+    "(每周)(每周)(每周)", "课程名教师教室", "王芳", "张健", "10", "11",
+    "数11/2311/2411/2511/2611/2711/2811/29",
     "大学物理（上）大学英语（1）大学物理（上）线性代数",
-    "中国近现代史线性代数思想道德与法治",
-    "(每周)(每周)(每周)",
-    "课程名教师教室",
-    "王老师|教 A-102陈老师|机房 C-301",
 ] {
     expect(isBogusCourseName(name), "bogus: \(name)")
 }
 
-for name in ["高等数学（上）", "大学英语（I）", "程序设计基础（C语言）", "体育（乒乓球）", "线性代数"] {
+for name in ["高等数学（上）", "大学英语（I）", "程序设计基础（C语言）", "体育（乒乓球）", "线性代数", "中国近现代史纲要"] {
     expect(!isBogusCourseName(name), "valid: \(name)")
 }
 

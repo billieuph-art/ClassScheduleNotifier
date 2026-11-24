@@ -119,82 +119,84 @@ private struct CellFields {
         if OCRCleanup.isBogusCourseName(name) { name = "" }
     }
 
-    /// 按行分类解析；成功取出课名则返回 true。
+    /// 按「课名 → 教师 → 教室 → 周次」行序解析；续接词并入课名，绝不把人名当课名。
     @discardableResult
     private mutating func parseStructuredLines(_ lines: [String]) -> Bool {
-        let remain = lines
         var weekLines: [String] = []
-        var roomLines: [String] = []
-        var teacherLines: [String] = []
-        var nameLines: [String] = []
+        var roomParts: [String] = []
+        var content: [String] = []
 
-        // 先抽出周次行 / 教室行 / 教师行，剩下的拼成课名
-        for line in remain {
+        var i = 0
+        while i < lines.count {
+            let line = lines[i]
             if isWeekLine(line) {
                 weekLines.append(line)
             } else if isRoomLine(line) {
-                roomLines.append(line)
-            } else if isTeacherLine(line) {
-                teacherLines.append(line)
-            } else {
-                nameLines.append(line)
+                roomParts.append(line)
+            } else if i + 1 < lines.count,
+                      Patterns.firstMatch(Patterns.buildingOnly, in: line) != nil,
+                      Patterns.firstMatch(Patterns.roomNumber, in: lines[i + 1]) != nil {
+                roomParts.append("\(line) \(lines[i + 1])")
+                i += 1
+            } else if Patterns.firstMatch(Patterns.junkName, in: line) == nil {
+                content.append(line)
             }
+            i += 1
         }
 
-        // 「教一楼」+「302」被拆成两行时合并
-        if roomLines.isEmpty {
-            for i in 0..<(remain.count - 1) {
-                if Patterns.firstMatch(Patterns.buildingOnly, in: remain[i]) != nil,
-                   Patterns.firstMatch(Patterns.roomNumber, in: remain[i + 1]) != nil {
-                    roomLines = ["\(remain[i]) \(remain[i + 1])"]
-                    nameLines.removeAll { $0 == remain[i] || $0 == remain[i + 1] }
-                    teacherLines.removeAll { $0 == remain[i] || $0 == remain[i + 1] }
-                    break
-                }
+        // 内容行：先拼课名（含续接词），再认教师
+        var nameParts: [String] = []
+        var teacherCandidate = ""
+        for (idx, part) in content.enumerated() {
+            if OCRCleanup.isClearTeacherLabel(part) {
+                if teacherCandidate.isEmpty { teacherCandidate = part }
+                continue
             }
+            if OCRCleanup.courseContinuations.contains(part) || part.count == 1 {
+                nameParts.append(part)
+                continue
+            }
+            // 已有像样课名后，2–3 字人名 → 教师
+            let assembled = nameParts.joined()
+            if teacherCandidate.isEmpty,
+               OCRCleanup.looksLikePersonNameOnly(part),
+               assembled.count >= 4 {
+                teacherCandidate = part
+                continue
+            }
+            // 尚未有课名时，人名行先跳过（避免王芳当课名）；若整格只剩人名则最后丢弃
+            if nameParts.isEmpty, OCRCleanup.looksLikePersonNameOnly(part), idx + 1 < content.count {
+                // 后面还有内容时，暂存为人名，不写进课名
+                if teacherCandidate.isEmpty { teacherCandidate = part }
+                continue
+            }
+            nameParts.append(part)
         }
 
-        if let weekText = weekLines.first {
-            applyWeeks(from: weekText)
-        }
-        if let roomText = roomLines.first {
-            classroom = normalizeRoom(roomText)
-        }
-        if let teacherText = teacherLines.first {
-            teacher = teacherText.replacingOccurrences(of: "老师|教授", with: "", options: .regularExpression)
+        name = OCRCleanup.sanitizeCourseName(nameParts.joined())
+        if OCRCleanup.isBogusCourseName(name) || OCRCleanup.looksLikePersonNameOnly(name) {
+            name = ""
         }
 
-        // 课名：优先非教师/非教室行；若分类过狠导致为空，用最长一行（排除伪课程）
-        name = nameLines
-            .filter { Patterns.firstMatch(Patterns.junkName, in: $0) == nil && !ScheduleJunk.isNonCourseText($0) }
-            .joined()
-        if name.count < 2 {
-            let fallback = lines
-                .filter { Patterns.firstMatch(Patterns.junkName, in: $0) == nil && !ScheduleJunk.isNonCourseText($0) }
-                .max(by: { $0.count < $1.count }) ?? ""
-            name = fallback
+        if let weekText = weekLines.first { applyWeeks(from: weekText) }
+        if let roomText = roomParts.first {
+            classroom = OCRCleanup.sanitizeClassroom(normalizeRoom(roomText))
         }
-        name = name.replacingOccurrences(of: #"^[\[【\(（]+|[\]】\)）]+$"#, with: "", options: .regularExpression)
-        name = OCRCleanup.sanitizeCourseName(name)
-        if ScheduleJunk.isNonCourseText(name) || OCRCleanup.isBogusCourseName(name) { name = "" }
+        if !teacherCandidate.isEmpty {
+            teacher = OCRCleanup.sanitizeTeacher(teacherCandidate)
+        }
+        // 教师与课名相同 → 清掉教师（自习时间）
+        if !teacher.isEmpty, teacher == name { teacher = "" }
 
-        // 仍缺字段时，对剩余拼接文本补抽
-        if classroom.isEmpty || teacher.isEmpty || weeks.isEmpty || name.count < 2 {
-            var leftover = lines.filter { line in
-                line != classroom && line != teacher && !weekLines.contains(line) && !roomLines.contains(line)
-            }
-            if name.count >= 2 { leftover.removeAll { $0 == name || name.contains($0) } }
-            let joined = OCRTextJoiner.join(leftover.isEmpty ? lines : leftover)
-            if classroom.isEmpty || teacher.isEmpty || weeks.isEmpty {
-                var tmp = CellFields()
-                tmp.parseJoined(joined)
-                if classroom.isEmpty { classroom = tmp.classroom }
-                if teacher.isEmpty { teacher = tmp.teacher }
-                if weeks.isEmpty { weeks = tmp.weeks }
-                if periods == nil { periods = tmp.periods }
-                if times == nil { times = tmp.times }
-                if name.count < 2 { name = tmp.name }
-            }
+        // 补抽教室/周次（不覆盖已有课名）
+        if classroom.isEmpty || weeks.isEmpty {
+            let joined = OCRTextJoiner.join(lines)
+            var tmp = CellFields()
+            tmp.parseJoined(joined)
+            if classroom.isEmpty { classroom = OCRCleanup.sanitizeClassroom(tmp.classroom) }
+            if weeks.isEmpty { weeks = tmp.weeks }
+            if periods == nil { periods = tmp.periods }
+            if times == nil { times = tmp.times }
         }
 
         return name.count >= 2
@@ -338,8 +340,10 @@ private struct CellFields {
     }
 
     private func isTeacherLine(_ line: String) -> Bool {
-        Patterns.firstMatch(Patterns.teacherLoose, in: line) != nil
-            || Patterns.firstMatch(Patterns.teacher, in: line) != nil
+        if OCRCleanup.isClearTeacherLabel(line) { return true }
+        if OCRCleanup.courseContinuations.contains(line) { return false }
+        if OCRCleanup.looksLikePersonNameOnly(line) { return true }
+        return Patterns.firstMatch(Patterns.teacher, in: line) != nil
     }
 
     private func normalizeRoom(_ raw: String) -> String {
@@ -356,9 +360,9 @@ private struct CellFields {
             guard chars.count > len else { continue }
             let suffix = String(chars.suffix(len))
             let prefix = String(chars.dropLast(len))
-            guard Patterns.firstMatch(Patterns.teacherLoose, in: suffix) != nil else { continue }
+            if OCRCleanup.courseContinuations.contains(suffix) { continue }
+            guard OCRCleanup.looksLikePersonNameOnly(suffix) || OCRCleanup.isClearTeacherLabel(suffix) else { continue }
             guard prefix.count >= 2 else { continue }
-            // 前缀应像课名（含汉字且不只是姓）
             let han = prefix.filter { $0.unicodeScalars.first.map { (0x4E00...0x9FFF).contains($0.value) } == true }
             if han.count >= 2 { return (prefix, suffix) }
         }
@@ -388,52 +392,159 @@ enum GridHeuristicParser {
         let colBounds = columnBounds(sortedCols)
         let leftBoundary = colBounds.map(\.value.lowerBound).min() ?? (sortedCols[0].x - 0.06)
 
-        var periodBands = detectPeriodBands(in: items, leftBoundary: leftBoundary, headerBottom: headerBottom)
-        if periodBands.count < 2 {
-            periodBands = guessedPeriodBands(from: items, leftBoundary: leftBoundary, headerBottom: headerBottom, slots: slots)
-        }
-        guard !periodBands.isEmpty else { return [] }
+        let detectedBands = detectPeriodBands(in: items, leftBoundary: leftBoundary, headerBottom: headerBottom)
+        let bandDrafts = parseByBands(items: items, colBounds: colBounds, bands: detectedBands,
+                                      headerBottom: headerBottom, slots: slots)
+        // 超星等：左侧无清晰「第1-2节」时，按列内竖向课块解析（课程@教室）
+        let blockDrafts = parseByColumnBlocks(items: items, columns: columns, colBounds: colBounds,
+                                              headerBottom: headerBottom, leftBoundary: leftBoundary, slots: slots)
 
+        let bandScore = bandDrafts.filter { $0.canCommit || !$0.classroom.isEmpty }.count
+        let blockScore = blockDrafts.filter { $0.canCommit || !$0.classroom.isEmpty || $0.name.contains("@") }.count
+        if bandScore >= blockScore, !bandDrafts.isEmpty {
+            return bandDrafts
+        }
+        if !blockDrafts.isEmpty { return blockDrafts }
+        // 节次带猜测回退
+        let guessed = guessedPeriodBands(from: items, leftBoundary: leftBoundary, headerBottom: headerBottom, slots: slots)
+        return parseByBands(items: items, colBounds: colBounds, bands: guessed,
+                            headerBottom: headerBottom, slots: slots)
+    }
+
+    private static func parseByBands(items: [TextItem], colBounds: [Int: ClosedRange<CGFloat>],
+                                     bands: [PeriodBand], headerBottom: CGFloat,
+                                     slots: [PeriodSlot]) -> [CourseDraft] {
+        guard !bands.isEmpty else { return [] }
         var drafts: [CourseDraft] = []
         for (day, xRange) in colBounds {
-            for band in periodBands {
+            for band in bands {
                 let cellItems = items.filter { item in
                     guard item.rect.minY >= headerBottom - 0.01 else { return false }
-                    let x = item.rect.midX
-                    let y = item.rect.midY
-                    return xRange.contains(x) && band.yRange.contains(y)
+                    return xRange.contains(item.rect.midX) && band.yRange.contains(item.rect.midY)
                 }
-                guard !cellItems.isEmpty else { continue }
-
-                let lines = OCRCleanup.dedupeLines(cellItems.sorted { $0.rect.minY < $1.rect.minY }.map(\.text))
-                // 单元格内再丢掉左侧节次标签残留
-                let contentLines = lines.filter { line in
-                    Patterns.firstMatch(Patterns.rowLabel, in: line) == nil
-                        && line.range(of: #"^\d{1,2}[:：]\d{2}([-－—~～]\d{1,2}[:：]\d{2})?$"#, options: .regularExpression) == nil
+                guard let draft = draftFromCell(cellItems, day: day, periods: (band.startPeriod, band.endPeriod), slots: slots) else {
+                    continue
                 }
-                guard !contentLines.isEmpty else { continue }
-
-                var fields = CellFields(lines: contentLines)
-                fields.name = OCRCleanup.sanitizeCourseName(fields.name)
-                guard fields.name.count >= 2 else { continue }
-                guard !OCRCleanup.isBogusCourseName(fields.name) else { continue }
-                guard Patterns.firstMatch(Patterns.junkName, in: fields.name) == nil else { continue }
-                guard !fields.name.contains("@") else { continue }
-
-                var draft = CourseDraft(name: fields.name, classroom: fields.classroom, teacher: fields.teacher,
-                                        weekday: day, weeks: fields.weeks)
-                if let p = fields.periods {
-                    draft.startPeriod = p.0; draft.endPeriod = p.1
-                } else {
-                    draft.startPeriod = band.startPeriod
-                    draft.endPeriod = band.endPeriod
-                }
-                if let t = fields.times { draft.startMinutes = t.0; draft.endMinutes = t.1 }
-                draft.complete(with: slots, preferPeriods: true)
-                if draft.isValid { drafts.append(draft) }
+                drafts.append(draft)
             }
         }
         return drafts.sorted { ($0.weekday, $0.startPeriod) < ($1.weekday, $1.startPeriod) }
+    }
+
+    /// 超星窄列：同一星期列内按 Y 聚成课块，保留 课程@教室。
+    private static func parseByColumnBlocks(items: [TextItem], columns: [Int: Column],
+                                            colBounds: [Int: ClosedRange<CGFloat>],
+                                            headerBottom: CGFloat, leftBoundary: CGFloat,
+                                            slots: [PeriodSlot]) -> [CourseDraft] {
+        let rowCenters = detectPeriodRowCenters(in: items, leftBoundary: leftBoundary, headerBottom: headerBottom)
+        var drafts: [CourseDraft] = []
+        for (day, xRange) in colBounds {
+            let columnItems = items.filter {
+                $0.rect.minY >= headerBottom - 0.004 && xRange.contains($0.rect.midX)
+            }
+            let blocks = verticalBlocks(from: columnItems)
+            for (blockIndex, block) in blocks.enumerated() {
+                let nextTop = blockIndex + 1 < blocks.count ? blocks[blockIndex + 1].map(\.rect.minY).min() : nil
+                let periods = periodsForBlock(block, rowCenters: rowCenters, nextTop: nextTop)
+                guard let draft = draftFromCell(block, day: day, periods: periods, slots: slots, allowAtRoom: true) else {
+                    continue
+                }
+                drafts.append(draft)
+            }
+        }
+        return drafts.sorted { ($0.weekday, $0.startPeriod) < ($1.weekday, $1.startPeriod) }
+    }
+
+    private static func draftFromCell(_ cellItems: [TextItem], day: Int, periods: (Int, Int)?,
+                                      slots: [PeriodSlot], allowAtRoom: Bool = false) -> CourseDraft? {
+        guard !cellItems.isEmpty else { return nil }
+        let lines = OCRCleanup.dedupeLines(cellItems.sorted { $0.rect.minY < $1.rect.minY }.map(\.text))
+        let contentLines = lines.filter { line in
+            Patterns.firstMatch(Patterns.rowLabel, in: line) == nil
+                && line.range(of: #"^\d{1,2}[:：]\d{2}([-－—~～]\d{1,2}[:：]\d{2})?$"#, options: .regularExpression) == nil
+                && line.range(of: #"^\d{1,2}/\d{1,2}$"#, options: .regularExpression) == nil
+        }
+        guard !contentLines.isEmpty else { return nil }
+
+        var fields = CellFields(lines: contentLines)
+        fields.name = OCRCleanup.sanitizeCourseName(fields.name)
+        // 超星 name@room
+        if allowAtRoom, fields.name.contains("@"),
+           let m = Patterns.firstMatch(Patterns.atRoom, in: fields.name),
+           let course = Patterns.string(m, group: 1, in: fields.name),
+           let room = Patterns.string(m, group: 2, in: fields.name) {
+            fields.name = course
+            if fields.classroom.isEmpty { fields.classroom = room }
+        }
+        fields.name = OCRCleanup.sanitizeCourseName(fields.name)
+        fields.classroom = OCRCleanup.sanitizeClassroom(fields.classroom)
+        fields.teacher = OCRCleanup.sanitizeTeacher(fields.teacher)
+        if fields.teacher == fields.name { fields.teacher = "" }
+
+        guard fields.name.count >= 2 else { return nil }
+        guard !OCRCleanup.isBogusCourseName(fields.name) else { return nil }
+        guard Patterns.firstMatch(Patterns.junkName, in: fields.name) == nil else { return nil }
+        if fields.name.contains("@") { return nil }
+
+        var draft = CourseDraft(name: fields.name, classroom: fields.classroom, teacher: fields.teacher,
+                                weekday: day, weeks: fields.weeks)
+        if let p = fields.periods {
+            draft.startPeriod = p.0; draft.endPeriod = p.1
+        } else if let p = periods, p.0 > 0 {
+            draft.startPeriod = p.0; draft.endPeriod = max(p.0, p.1)
+        }
+        if let t = fields.times { draft.startMinutes = t.0; draft.endMinutes = t.1 }
+        draft.complete(with: slots, preferPeriods: true)
+        return draft.isValid ? draft : nil
+    }
+
+    private static func verticalBlocks(from items: [TextItem]) -> [[TextItem]] {
+        let sorted = items.sorted { $0.rect.minY < $1.rect.minY }
+        let heights = sorted.map(\.rect.height).sorted()
+        let lineHeight = heights.dropFirst(heights.count / 3).first ?? 0.02
+        var result: [[TextItem]] = []
+        for item in sorted {
+            if let last = result.last?.last, item.rect.minY - last.rect.maxY < max(lineHeight * 1.35, 0.014) {
+                result[result.count - 1].append(item)
+            } else {
+                result.append([item])
+            }
+        }
+        return result
+    }
+
+    private static func detectPeriodRowCenters(in items: [TextItem], leftBoundary: CGFloat, headerBottom: CGFloat) -> [Int: CGFloat] {
+        var rowCenters: [Int: CGFloat] = [:]
+        for item in items where item.rect.midX < leftBoundary && item.rect.minY > headerBottom - 0.02 {
+            let text = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let m = Patterns.firstMatch(Patterns.rowLabel, in: text),
+               let period = Patterns.string(m, group: 1, in: text).flatMap({ Int($0) }),
+               (1...20).contains(period), rowCenters[period] == nil {
+                rowCenters[period] = item.rect.midY
+            }
+        }
+        return rowCenters
+    }
+
+    private static func periodsForBlock(_ block: [TextItem], rowCenters: [Int: CGFloat], nextTop: CGFloat?) -> (Int, Int)? {
+        guard !rowCenters.isEmpty else { return nil }
+        let top = block.map(\.rect.minY).min() ?? 0
+        let bottom = block.map(\.rect.maxY).max() ?? 0
+        let tolerance: CGFloat = 0.014
+        let covered = rowCenters.filter { $0.value >= top - tolerance && $0.value <= bottom + tolerance }.keys.sorted()
+        if let first = covered.first, let last = covered.last {
+            if first == last, first % 2 == 1, let nextCenter = rowCenters[first + 1] {
+                let rowHeight = abs(nextCenter - (rowCenters[first] ?? nextCenter))
+                if nextTop.map({ $0 > nextCenter - rowHeight * 0.35 }) ?? true {
+                    return (first, first + 1)
+                }
+            }
+            return (first, last)
+        }
+        let mid = (top + bottom) / 2
+        let nearest = rowCenters.min { abs($0.value - mid) < abs($1.value - mid) }!.key
+        if nearest % 2 == 1, rowCenters[nearest + 1] != nil { return (nearest, nearest + 1) }
+        return (nearest, nearest)
     }
 
     /// 相邻列中点为边界，禁止跨列吞字。

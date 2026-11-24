@@ -102,7 +102,7 @@ enum ScheduleImporter {
         }
 
         // 默认：有格子周次（含单双周）则保留；否则截图「第 N 周」只挂该周
-        var scoped = drafts.filter { !ScheduleJunk.isNonCourseText($0.name) && $0.isValid }
+        var scoped = drafts.filter(isAcceptableDraft)
         let scope = ImportWeekScope.defaultScope(detectedWeek: detectedWeek,
                                                  hasPerCourseWeeks: scoped.contains { !$0.weeks.isEmpty })
         applyWeekScope(scope, detectedWeek: detectedWeek, to: &scoped)
@@ -140,58 +140,71 @@ enum ScheduleImporter {
         ]
         let ranked = candidates
             .map { pair -> (String, [CourseDraft], Int) in
-                let clean = dedupe(pair.1.filter {
-                    !$0.name.isEmpty
-                        && !ScheduleJunk.isNonCourseText($0.name)
-                        && !OCRCleanup.isBogusCourseName($0.name)
-                        && $0.isValid
-                })
-                // 网格版式：有教室的课越多越可信，额外加分避免被脏的 lines 抢赢
+                let clean = dedupe(pair.1.filter(isAcceptableDraft))
                 var score = quality(clean)
-                if pair.0 == "grid", clean.count >= 4 {
-                    score += clean.filter { !$0.classroom.isEmpty }.count * 2
-                    score += 8
+                // 无节次的脏 lines 大幅降权，避免抢走网格/列表
+                if pair.0 == "lines" {
+                    let withPeriod = clean.filter { $0.startPeriod > 0 }.count
+                    score = withPeriod * 3
+                    if withPeriod < 3 { score = min(score, 2) }
                 }
-                if pair.0 == "list", clean.count >= 4 {
-                    score += 6
+                if pair.0 == "grid", clean.count >= 3 {
+                    score += clean.filter { !$0.classroom.isEmpty }.count * 3
+                    score += clean.filter { $0.startPeriod > 0 }.count * 2
+                    score += 12
                 }
-                if pair.0 == "timeline", clean.count >= 4 {
-                    score += 6
+                if pair.0 == "list", clean.count >= 3 {
+                    score += clean.filter { $0.startPeriod > 0 || $0.endMinutes > $0.startMinutes }.count * 2
+                    score += 10
+                }
+                if pair.0 == "timeline", clean.count >= 3 {
+                    score += 10
                 }
                 return (pair.0, clean, score)
             }
             .sorted { $0.2 > $1.2 }
 
         guard let best = ranked.first, best.2 > 0, !best.1.isEmpty else {
-            return dedupe(list + grid + timeline + lines).filter { !ScheduleJunk.isNonCourseText($0.name) && $0.isValid }
+            return dedupe((list + grid + timeline).filter(isAcceptableDraft))
         }
 
         var drafts = best.1
-        // 用第二名补教室/教师/周次，但不引入「星期几」伪课程
-        if let second = ranked.dropFirst().first, second.2 >= best.2 / 2, !second.1.isEmpty {
+        // 仅用同级结构化结果补字段；永不合并脏 lines 残片
+        if let second = ranked.dropFirst().first,
+           second.0 != "lines", best.0 != "lines",
+           second.2 >= best.2 / 2, !second.1.isEmpty {
             drafts = merge(primary: drafts, secondary: second.1, fillWeeks: true)
         }
-        return drafts.filter { !ScheduleJunk.isNonCourseText($0.name) && $0.isValid }
+        return drafts.filter(isAcceptableDraft)
+    }
+
+    private static func isAcceptableDraft(_ draft: CourseDraft) -> Bool {
+        guard !draft.name.isEmpty, draft.isValid else { return false }
+        guard !ScheduleJunk.isNonCourseText(draft.name) else { return false }
+        guard !OCRCleanup.isBogusCourseName(draft.name) else { return false }
+        guard !OCRCleanup.looksLikePersonNameOnly(draft.name) else { return false }
+        return true
     }
 
     /// 分数越高表示课名越完整、教室越像真的、节次与时间一致。
     private static func quality(_ drafts: [CourseDraft]) -> Int {
         drafts.reduce(0) { score, draft in
             var s = 0
-            if ScheduleJunk.isNonCourseText(draft.name) { return score - 30 }
+            if ScheduleJunk.isNonCourseText(draft.name) || OCRCleanup.isBogusCourseName(draft.name) { return score - 40 }
+            if OCRCleanup.looksLikePersonNameOnly(draft.name) { return score - 40 }
             if draft.name.count >= 4 { s += 3 }
             if draft.name.count >= 6 { s += 3 }
             if draft.name.count >= 8 { s += 2 }
             if !draft.classroom.isEmpty { s += 4 }
             if draft.classroom.range(of: #"\d{2,5}|[A-Za-z]\-?\d{2,4}"#, options: .regularExpression) != nil { s += 4 }
-            if !draft.teacher.isEmpty { s += 4 }
+            if !draft.teacher.isEmpty, draft.teacher != draft.name { s += 4 }
             if !draft.weeks.isEmpty { s += 2 }
             if draft.name.contains("@") { s -= 8 }
-            if draft.name.count <= 3 { s -= 5 }
-            // 残片课名 / 教师粘连课名
-            if draft.name.count <= 4 && draft.classroom.isEmpty { s -= 4 }
+            if draft.name.count <= 3 { s -= 8 }
+            if draft.startPeriod <= 0 { s -= 6 }
+            if draft.name.count <= 4 && draft.classroom.isEmpty { s -= 6 }
             if draft.name.contains("楼") || draft.name.contains("馆") { s -= 6 }
-            if draft.startPeriod >= 1, draft.endPeriod >= draft.startPeriod { s += 2 }
+            if draft.startPeriod >= 1, draft.endPeriod >= draft.startPeriod { s += 4 }
             if draft.endMinutes > draft.startMinutes { s += 2 }
             if let mapped = PeriodTable.periods(startMinutes: draft.startMinutes, endMinutes: draft.endMinutes, in: SharedSettings.periodSlots),
                mapped.0 == draft.startPeriod, mapped.1 == draft.endPeriod {

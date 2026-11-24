@@ -86,9 +86,10 @@ struct CourseDraft: Identifiable, Hashable {
         if cleaned.contains("@") { return false }
         if cleaned.hasPrefix("周") && cleaned.count <= 3 { return false }
         if cleaned.hasPrefix("星期") && cleaned.count <= 4 { return false }
-        if cleaned.range(of: #"^\d{3,5}$"#, options: .regularExpression) != nil { return false }
+        if cleaned.range(of: #"^\d{1,5}$"#, options: .regularExpression) != nil { return false }
         if cleaned.range(of: #"^[一二三四五六日天]?@?\d{3,5}$"#, options: .regularExpression) != nil { return false }
         if cleaned.range(of: #"^\d{1,2}[:：]\d{2}"#, options: .regularExpression) != nil { return false }
+        if OCRCleanup.looksLikePersonNameOnly(cleaned) { return false }
         return true
     }
 
