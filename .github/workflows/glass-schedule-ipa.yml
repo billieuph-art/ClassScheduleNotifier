@@ -28,6 +28,7 @@ jobs:
         run: |
           swift GlassSchedule/Tests/run_ocr_cleanup_tests.swift
           swift GlassSchedule/Tests/run_grid_spatial_tests.swift
+          swift GlassSchedule/Tests/run_horizontal_grid_tests.swift
           swift GlassSchedule/Tests/run_weeks_parser_tests.swift
           swift GlassSchedule/Tests/run_bug_screenshot_fixtures.swift
           swift GlassSchedule/Tests/run_chaoxing_atroom_tests.swift
