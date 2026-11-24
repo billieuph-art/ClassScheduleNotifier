@@ -220,6 +220,10 @@ enum HorizontalGridParser {
                 if !parsed.isEmpty { weeks = parsed }
                 continue
             }
+            if isRoomNumber(line) {
+                if classroom.isEmpty { classroom = line }
+                continue
+            }
 
             // 先从混合行中抽出教室，再处理剩余的课名/教师文字。
             if let room = extractClassroomFragment(from: line) {
