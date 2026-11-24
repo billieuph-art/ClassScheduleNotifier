@@ -19,6 +19,7 @@ struct ImportView: View {
     @State private var major = SharedSettings.defaultMajor
     @State private var replaceExisting = false
     @State private var weekScope: ImportWeekScope = .everyWeek
+    @State private var showSaveReviewAlert = false
 
     var body: some View {
         NavigationStack {
@@ -38,10 +39,16 @@ struct ImportView: View {
                 }
                 if outcome != nil {
                     ToolbarItem(placement: .confirmationAction) {
-                        Button("保存", systemImage: "checkmark", role: .confirm) { save() }
-                            .disabled(!drafts.contains { $0.isIncluded })
+                        Button("保存", systemImage: "checkmark", role: .confirm) { requestSave() }
+                            .disabled(!drafts.contains { $0.isIncluded && $0.isValid })
                     }
                 }
+            }
+            .alert("仍有待确认课程", isPresented: $showSaveReviewAlert) {
+                Button("继续保存", role: .destructive) { save() }
+                Button("回去检查", role: .cancel) {}
+            } message: {
+                Text("勾选的课程里仍有「待确认」项（字段不全或课名可疑）。未点保存前不会写入课表；建议先修改或取消勾选。")
             }
             .fileImporter(isPresented: $showFileImporter, allowedContentTypes: TextExtractor.supportedTypes) { result in
                 if case .success(let url) = result {
@@ -290,7 +297,9 @@ struct ImportView: View {
                 if result.drafts.isEmpty {
                     errorMessage = "没有识别出课程。可以尝试裁剪掉无关区域后重新截图，或手动添加。无 Apple 智能时也会用本地规则识别。"
                 } else {
-                    drafts = result.drafts.sorted { ($0.weekday, $0.startPeriod) < ($1.weekday, $1.startPeriod) }
+                    var prepared = result.drafts
+                    for i in prepared.indices { prepared[i].applyImportSafety() }
+                    drafts = prepared.sorted { ($0.weekday, $0.startPeriod) < ($1.weekday, $1.startPeriod) }
                     outcome = result
                     weekScope = ImportWeekScope.defaultScope(detectedWeek: result.detectedTeachingWeek,
                                                              hasPerCourseWeeks: result.drafts.contains { !$0.weeks.isEmpty })
@@ -303,7 +312,17 @@ struct ImportView: View {
         }
     }
 
+    private func requestSave() {
+        let risky = drafts.contains { $0.isIncluded && $0.isValid && $0.needsReview }
+        if risky {
+            showSaveReviewAlert = true
+        } else {
+            save()
+        }
+    }
+
     private func save() {
+        // 关闭/取消不会走到这里；仅确认保存才写入
         let majorName = major.trimmingCharacters(in: .whitespaces)
         if replaceExisting {
             for course in existing { context.delete(course) }
@@ -365,7 +384,7 @@ private struct DraftRow: View {
                     HStack(spacing: 6) {
                         Text(draft.name).font(.headline)
                         if draft.needsReview {
-                            Text("待确认")
+                            Text(draft.classroom.isEmpty && draft.teacher.isEmpty ? "缺教室/教师" : "待确认")
                                 .font(.caption2.weight(.semibold))
                                 .foregroundStyle(.orange)
                         }

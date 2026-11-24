@@ -81,7 +81,25 @@ enum OCRCleanup {
 
     static func sanitizeCourseName(_ raw: String) -> String {
         var t = collapseRepeatedPhrase(raw)
+        // 保留「教 A-201」这类空格无意义时再压；课名内空格去掉
         t = t.replacingOccurrences(of: #"\s+"#, with: "", options: .regularExpression)
+        return t
+    }
+
+    /// 教室字段去重：「教一楼302教一楼302」→「教一楼302」
+    static func sanitizeClassroom(_ raw: String) -> String {
+        var t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        t = collapseRepeatedPhrase(t)
+        t = t.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        return t
+    }
+
+    /// 教师字段去重：「李明李明」→「李明」
+    static func sanitizeTeacher(_ raw: String) -> String {
+        var t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        t = collapseRepeatedPhrase(t)
+        let stripped = t.replacingOccurrences(of: "老师|教授", with: "", options: .regularExpression)
+        if stripped.count >= 2 { return stripped }
         return t
     }
 

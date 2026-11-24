@@ -314,16 +314,24 @@ enum ScheduleQuery {
 }
 
 enum WeeksParser {
-    /// 解析 "1-16周"、"1-8,10-16"、"1-16(单)"、"3,5,7周" 等写法；无法识别时返回空数组（表示每周）。
+    /// 解析 "1-16周"、"1-8,10-16"、"1-16(单)"、"3,5,7周"、"第1-16周（每周）" 等。
+    /// 空数组表示每周；单/双周会过滤奇偶。
     static func parse(_ text: String) -> [Int] {
-        var t = text.replacingOccurrences(of: "，", with: ",")
+        let raw = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 纯「每周」/「第1-16周（每周）」里的每周 → 有数字则取范围且不筛单双；仅「每周」→ 空
+        let everyWeekOnly = raw.replacingOccurrences(of: #"[（()）\s]"#, with: "", options: .regularExpression)
+        if everyWeekOnly == "每周" { return [] }
+
+        var t = raw.replacingOccurrences(of: "，", with: ",")
             .replacingOccurrences(of: "、", with: ",")
             .replacingOccurrences(of: "—", with: "-")
             .replacingOccurrences(of: "–", with: "-")
             .replacingOccurrences(of: "~", with: "-")
             .replacingOccurrences(of: "至", with: "-")
-        let oddOnly = t.contains("单")
-        let evenOnly = t.contains("双")
+        // 「每周」标记不参与单双判断
+        let hasEvery = t.contains("每周")
+        let oddOnly = !hasEvery && t.contains("单")
+        let evenOnly = !hasEvery && t.contains("双")
         t = t.replacingOccurrences(of: "[^0-9,\\-]", with: " ", options: .regularExpression)
         var weeks = Set<Int>()
         for token in t.split(whereSeparator: { $0 == "," || $0 == " " }) {

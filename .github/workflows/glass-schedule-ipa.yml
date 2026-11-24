@@ -23,11 +23,12 @@ jobs:
         with:
           xcode-version: "26.3"
 
-      - name: OCR cleanup / grid spatial regressions
+      - name: OCR cleanup / grid spatial / weeks regressions
         working-directory: .
         run: |
           swift GlassSchedule/Tests/run_ocr_cleanup_tests.swift
           swift GlassSchedule/Tests/run_grid_spatial_tests.swift
+          swift GlassSchedule/Tests/run_weeks_parser_tests.swift
 
       - name: Generate Xcode project
         run: |
@@ -129,14 +130,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: glass-schedule-sideload-${{ github.run_number }}
-          name: Classio 侧载版 IPA ${{ github.run_number }}（v1.0.14）
+          name: Classio 侧载版 IPA ${{ github.run_number }}（v1.0.15）
           target_commitish: ${{ github.sha }}
           prerelease: true
           files: |
             GlassSchedule/GlassSchedule-sideload.ipa
             GlassSchedule/GlassSchedule-sideload-lite.ipa
           body: |
-            ## Classio 侧载专用包（v1.0.14）
+            ## Classio 侧载专用包（v1.0.15）
 
             ### 本版
             - **识别大修**：列表横排 / 网格竖排 / 时间轴三种版式分别解析

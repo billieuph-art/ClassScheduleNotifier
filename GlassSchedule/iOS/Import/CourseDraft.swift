@@ -25,8 +25,8 @@ struct CourseDraft: Identifiable, Hashable {
     /// - Parameter preferPeriods: 网格课表以节次为准重算时间；列表/ICS 以时间反推节次。
     mutating func complete(with slots: [PeriodSlot], preferPeriods: Bool = true) {
         name = OCRCleanup.sanitizeCourseName(name)
-        classroom = classroom.trimmingCharacters(in: .whitespacesAndNewlines)
-        teacher = teacher.trimmingCharacters(in: .whitespacesAndNewlines)
+        classroom = OCRCleanup.sanitizeClassroom(classroom)
+        teacher = OCRCleanup.sanitizeTeacher(teacher)
         // 再处理一次 name@room（AI / 碎片拼接后的残留）
         if let at = name.firstIndex(of: "@") {
             let room = String(name[name.index(after: at)...]).trimmingCharacters(in: .whitespaces)
@@ -83,9 +83,22 @@ struct CourseDraft: Identifiable, Hashable {
         return true
     }
 
-    /// 确认页提示：课名可疑（拼接/伪课程），需人工核对。
+    /// 确认页提示：课名可疑，或教室与教师都缺失。
     var needsReview: Bool {
-        OCRCleanup.looksLikeMergedCourses(name) || OCRCleanup.isBogusCourseName(name)
+        if OCRCleanup.looksLikeMergedCourses(name) || OCRCleanup.isBogusCourseName(name) { return true }
+        // 两个关键字段都空时，要求用户确认，避免静默写入残缺课
+        if classroom.isEmpty && teacher.isEmpty { return true }
+        return false
+    }
+
+    /// 导入后：可疑项默认不勾选，防止误保存。
+    mutating func applyImportSafety() {
+        name = OCRCleanup.sanitizeCourseName(name)
+        if OCRCleanup.isBogusCourseName(name) || OCRCleanup.looksLikeMergedCourses(name) {
+            isIncluded = false
+        } else if classroom.isEmpty && teacher.isEmpty {
+            isIncluded = false
+        }
     }
 
     func makeCourse(major: String) -> Course {

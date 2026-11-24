@@ -9,6 +9,8 @@ struct TextItem: Hashable {
     var text: String
     var rect: CGRect
     var page: Int
+    /// Vision 候选置信度 0…1；旧路径或无置信度时为 1。
+    var confidence: Float = 1
 }
 
 struct ExtractedDocument {
@@ -95,15 +97,16 @@ enum TextExtractor {
         let observations = try await request.perform(on: cgImage)
         let raw: [TextItem] = observations.compactMap { observation in
             guard let candidate = observation.topCandidates(1).first else { return nil }
+            let confidence = candidate.confidence
             // 过低置信度易产生串字，丢掉
-            if candidate.confidence < 0.35 { return nil }
+            if confidence < 0.35 { return nil }
             let box = observation.boundingBox.cgRect
             // Vision 的原点在左下角，转换为左上角便于按行排序。
             let rect = CGRect(x: box.minX, y: 1 - box.maxY, width: box.width, height: box.height)
             let text = candidate.string
                 .replacingOccurrences(of: "：", with: ":")
                 .applyingTransform(.fullwidthToHalfwidth, reverse: false) ?? candidate.string
-            return TextItem(text: text, rect: rect, page: page)
+            return TextItem(text: text, rect: rect, page: page, confidence: confidence)
         }
         return OCRCleanup.dedupeItems(raw)
     }
