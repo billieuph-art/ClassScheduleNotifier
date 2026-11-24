@@ -77,10 +77,8 @@ jobs:
 
             if [ "$include_plugins" != "yes" ]; then
               rm -rf "$APP/PlugIns"
-              # lite 无 Widget/Live Activity：去掉声明，避免部分安装器拒装
-              plutil -remove NSSupportsLiveActivities "$APP/Info.plist" 2>/dev/null || true
-              plutil -remove NSSupportsLiveActivitiesFrequentUpdates "$APP/Info.plist" 2>/dev/null || true
-              echo "Lite: removed PlugIns + Live Activities Info.plist keys"
+              # 对齐可安装的 v1.0.11：lite 去掉扩展，但保留 Live Activities Info 键
+              echo "Lite: removed PlugIns (Info.plist Live Activities keys kept like v1.0.11)"
             fi
 
             # 与可安装的 v1.0.7/1.0.11 一致：先扩展后主包 ad-hoc 签名（含 DER）
@@ -98,15 +96,25 @@ jobs:
               find "$APP/PlugIns" -type f -name 'GlassScheduleWidgets' -exec chmod +x {} \;
             fi
 
-            # ditto 打 IPA 比 zip 更贴近 Apple 工具链，减少侧载解析异常
+            # 与历史可安装包一致：zip 打包（勿用 ditto -c，部分直接安装器不认）
             mkdir -p Payload
             ditto "$APP" Payload/GlassSchedule.app
-            ditto -c -k --sequesterRsrc --keepParent Payload "$out_ipa"
+            ICON_SIZE=$(stat -f%z "Payload/GlassSchedule.app/AppIcon60x60@2x.png")
+            CAR_SIZE=$(stat -f%z "Payload/GlassSchedule.app/Assets.car")
+            echo "AppIcon60x60@2x.png=$ICON_SIZE Assets.car=$CAR_SIZE"
+            if [ "$ICON_SIZE" -lt 12000 ]; then
+              echo "ERROR: AppIcon too small ($ICON_SIZE) — likely corrupt catalog"
+              exit 1
+            fi
+            if [ "$CAR_SIZE" -lt 200000 ] || [ "$CAR_SIZE" -gt 600000 ]; then
+              echo "ERROR: Assets.car out of installable range ($CAR_SIZE)"
+              exit 1
+            fi
+            zip -r -q "$out_ipa" Payload
             ls -lh "$out_ipa"
 
             echo "---- $label summary ----"
             plutil -p Payload/GlassSchedule.app/Info.plist | grep -E "CFBundleIdentifier|CFBundleDisplayName|MinimumOSVersion|CFBundleShortVersionString|UIBackgroundModes|NSSupportsLiveActivities" || true
-            echo "Assets.car=$(stat -f%z Payload/GlassSchedule.app/Assets.car)"
             if [ -d Payload/GlassSchedule.app/PlugIns ]; then
               find Payload/GlassSchedule.app/PlugIns -name Info.plist -exec plutil -p {} \; | grep CFBundleIdentifier || true
             else
@@ -136,23 +144,24 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: glass-schedule-sideload-${{ github.run_number }}
-          name: Classio 侧载版 IPA ${{ github.run_number }}（v1.0.19）
+          name: Classio 侧载版 IPA ${{ github.run_number }}（v1.0.20）
           target_commitish: ${{ github.sha }}
           prerelease: true
           files: |
             GlassSchedule/GlassSchedule-sideload.ipa
             GlassSchedule/GlassSchedule-sideload-lite.ipa
           body: |
-            ## Classio 侧载专用包（v1.0.19）
+            ## Classio 侧载专用包（v1.0.20）
 
             ### 本版（安装修复）
-            - **压缩深浅色/着色 AppIcon**，把 Assets.car 压回可安装量级（对齐 v1.0.11）
-            - IPA 改用 `ditto` 打包；lite 去掉 Live Activities 声明
-            - 发布前强制 Assets.car ≤ 600KB
+            - 回退 v1.0.19 的过度压缩图标 / ditto 打包
+            - **对齐可安装的 v1.0.11**：单套完整质量 AppIcon + 传统 zip 打包
+            - Assets.car 约 0.35–0.4MB；AppIcon 校验防止损坏资源进包
+            - 深色/着色图标文件仍保留在工程内，暂不编入侧载包以保证可安装
 
-            ### 安装（请先试 lite）
-            1. **先装 `GlassSchedule-sideload-lite.ipa`**（无小组件，侧载成功率最高）
+            ### 安装
+            1. **优先 `GlassSchedule-sideload-lite.ipa`**
             2. 先删旧 Classio 再装；需要 **iOS 26+**
-            3. 完整版含 Widget/灵动岛，部分免费证书可能装不上
+            3. 完整版含 Widget，部分证书可能装不上
 
             Bundle ID：`com.billieuphart.glassschedule`

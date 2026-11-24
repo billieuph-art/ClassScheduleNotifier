@@ -108,25 +108,24 @@ fi
 test -f "$APP/Assets.car"
 test -f "$APP/AppIcon60x60@2x.png"
 
-# 可安装的 v1.0.11 Assets.car≈377KB（单外观）。多外观压缩后应压回 ≤600KB，
-# 过大时常见侧载安装失败（与历史 1.0.8/1.0.9/1.0.18 一致）。
+# 可安装的 v1.0.11：单外观 Assets.car≈377KB、AppIcon60x60≈17KB。
+# 多外观未压缩曾到 ~898KB 导致拒装；过度压缩又会让图标过小/损坏。
 CAR_SIZE=$(stat -f%z "$APP/Assets.car" 2>/dev/null || stat -c%s "$APP/Assets.car")
-echo "Assets.car=$CAR_SIZE"
-if [ "$CAR_SIZE" -gt 600000 ]; then
-  echo "ERROR: Assets.car too large ($CAR_SIZE > 600000); compress AppIcon PNGs"
+ICON_SIZE=$(stat -f%z "$APP/AppIcon60x60@2x.png" 2>/dev/null || stat -c%s "$APP/AppIcon60x60@2x.png")
+echo "Assets.car=$CAR_SIZE AppIcon60x60@2x=$ICON_SIZE"
+if [ "$CAR_SIZE" -lt 200000 ] || [ "$CAR_SIZE" -gt 600000 ]; then
+  echo "ERROR: Assets.car out of installable range ($CAR_SIZE); use single full-quality AppIcon like v1.0.11"
+  exit 1
+fi
+if [ "$ICON_SIZE" -lt 12000 ]; then
+  echo "ERROR: AppIcon60x60@2x.png too small ($ICON_SIZE); catalog likely corrupt"
   exit 1
 fi
 
-# lite 无扩展时不应再声明 Live Activities（部分安装器会因此拒装）
+# 对齐可安装的 v1.0.11：lite 无 PlugIns，但仍声明 Live Activities
 if [ "$LITE" = "yes" ]; then
-  if plutil -extract NSSupportsLiveActivities raw -o - "$APP/Info.plist" >/dev/null 2>&1; then
-    echo "ERROR: lite IPA still declares NSSupportsLiveActivities"
-    exit 1
-  fi
-  if plutil -extract NSSupportsLiveActivitiesFrequentUpdates raw -o - "$APP/Info.plist" >/dev/null 2>&1; then
-    echo "ERROR: lite IPA still declares NSSupportsLiveActivitiesFrequentUpdates"
-    exit 1
-  fi
+  plutil -extract NSSupportsLiveActivities raw -o - "$APP/Info.plist" | grep -qx 'true' \
+    || { echo "ERROR: lite should keep NSSupportsLiveActivities like v1.0.11"; exit 1; }
 fi
 
 echo "==> IPA validation passed"
