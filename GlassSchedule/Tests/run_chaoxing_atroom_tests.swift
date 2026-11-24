@@ -78,6 +78,11 @@ expect(!isCellPeriodNoise("3"), "裸数字 3 不是节次噪声")
 expect(!isCellPeriodNoise("2313"), "教室号不是节次噪声")
 expect(isCellPeriodNoise("第1-2节") || isCellPeriodNoise("1-2"), "1-2 是节次")
 
+// 无 @ 的残片不得当成完整课（确认页曾出现「水利工」「程造价」缺节次）
+expect(parseAtRoom(join(["水利工", "程造价"])) == nil, "无教室残片不解析")
+expect(parseAtRoom(join(["水利工", "程造价", "二@121", "6"]))?.1 == "1216", "周二完整教室 1216")
+expect(parseAtRoom(join(["水利工", "程造价", "二@220", "9"]))?.1 == "2209", "周三完整教室 2209")
+
 if failed == 0 {
     print("\nAll chaoxing @room regressions passed.")
     exit(0)

@@ -79,6 +79,24 @@ func isBogusCourseName(_ raw: String) -> Bool {
     if isRoomOnlyName(t) { return true }
     if looksLikePersonNameOnly(t) { return true }
     if t.count <= 2, !["体育", "自习"].contains(t) { return true }
+    let halfFragments: Set<String> = [
+        "水利工", "程造价", "水利造", "价软件", "程造价软件",
+        "水利工水利工水利造", "程造价程造价软件",
+    ]
+    if halfFragments.contains(t) { return true }
+    if t.count >= 6, t.count <= 18 {
+        for unitLen in 2...4 {
+            let unit = String(t.prefix(unitLen))
+            if unit.count < 2 { continue }
+            var hits = 0
+            var rest = t
+            while rest.hasPrefix(unit) {
+                rest = String(rest.dropFirst(unit.count))
+                hits += 1
+            }
+            if hits >= 2, !rest.isEmpty, rest.count <= unitLen + 2 { return true }
+        }
+    }
     if t.contains("课程名") && (t.contains("教师") || t.contains("教室")) { return true }
     return false
 }
@@ -107,6 +125,13 @@ for name in [
 for name in ["高等数学（上）", "大学英语（I）", "程序设计基础（C语言）", "体育（乒乓球）", "线性代数", "中国近现代史纲要"] {
     expect(!isBogusCourseName(name), "valid: \(name)")
 }
+
+// 超星确认页脏名
+for name in ["水利工", "程造价", "程造价软件", "水利工水利工水利造", "程造价程造价软件"] {
+    expect(isBogusCourseName(name), "chaoxing fragment bogus: \(name)")
+}
+expect(!isBogusCourseName("水利工程造价二"), "full chaoxing course valid")
+expect(!isBogusCourseName("水利造价软件应用"), "software course valid")
 
 if failed == 0 {
     print("\nAll OCR cleanup regressions passed.")

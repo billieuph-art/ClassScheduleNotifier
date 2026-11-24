@@ -142,20 +142,30 @@ enum ScheduleImporter {
             .map { pair -> (String, [CourseDraft], Int) in
                 let clean = dedupe(pair.1.filter(isAcceptableDraft))
                 var score = quality(clean)
+                let atRoomCount = clean.filter {
+                    !$0.classroom.isEmpty
+                        && $0.classroom.range(of: #"\d{3,}"#, options: .regularExpression) != nil
+                        && $0.name.count >= 4
+                }.count
                 // 无节次的脏 lines 大幅降权，避免抢走网格/列表
                 if pair.0 == "lines" {
                     let withPeriod = clean.filter { $0.startPeriod > 0 }.count
                     score = withPeriod * 3
                     if withPeriod < 3 { score = min(score, 2) }
                 }
-                if pair.0 == "grid", clean.count >= 3 {
-                    score += clean.filter { !$0.classroom.isEmpty }.count * 3
-                    score += clean.filter { $0.startPeriod > 0 }.count * 2
-                    score += 12
+                if pair.0 == "grid" {
+                    if clean.count >= 2 {
+                        score += clean.filter { !$0.classroom.isEmpty }.count * 3
+                        score += clean.filter { $0.startPeriod > 0 }.count * 2
+                        score += 12
+                    }
+                    // 超星「课名@教室」网格：绝对优先，防止 list/lines 残片污染
+                    if atRoomCount >= 2 { score += 40 }
                 }
                 if pair.0 == "list", clean.count >= 3 {
                     score += clean.filter { $0.startPeriod > 0 || $0.endMinutes > $0.startMinutes }.count * 2
                     score += 10
+                    if atRoomCount == 0 { /* keep */ } else { score -= 20 }
                 }
                 if pair.0 == "timeline", clean.count >= 3 {
                     score += 10
@@ -169,8 +179,12 @@ enum ScheduleImporter {
         }
 
         var drafts = best.1
-        // 仅用同级结构化结果补字段；永不合并脏 lines 残片
-        if let second = ranked.dropFirst().first,
+        let bestIsAtRoomGrid = best.0 == "grid" && best.1.filter {
+            !$0.classroom.isEmpty && $0.name.count >= 4
+        }.count >= 2
+        // 超星 @教室 网格已完整时不再合并其他版式（曾把「程造价软件」等残片拼进来）
+        if !bestIsAtRoomGrid,
+           let second = ranked.dropFirst().first,
            second.0 != "lines", best.0 != "lines",
            second.2 >= best.2 / 2, !second.1.isEmpty {
             drafts = merge(primary: drafts, secondary: second.1, fillWeeks: true)

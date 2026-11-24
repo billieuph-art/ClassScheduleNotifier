@@ -31,6 +31,7 @@ jobs:
           swift GlassSchedule/Tests/run_weeks_parser_tests.swift
           swift GlassSchedule/Tests/run_bug_screenshot_fixtures.swift
           swift GlassSchedule/Tests/run_chaoxing_atroom_tests.swift
+          swift GlassSchedule/Tests/run_chaoxing_week13_fixture.swift
 
       - name: Generate Xcode project
         run: |
@@ -144,24 +145,23 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: glass-schedule-sideload-${{ github.run_number }}
-          name: Classio 侧载版 IPA ${{ github.run_number }}（v1.0.20）
+          name: Classio 侧载版 IPA ${{ github.run_number }}（v1.0.21）
           target_commitish: ${{ github.sha }}
           prerelease: true
           files: |
             GlassSchedule/GlassSchedule-sideload.ipa
             GlassSchedule/GlassSchedule-sideload-lite.ipa
           body: |
-            ## Classio 侧载专用包（v1.0.20）
+            ## Classio 侧载专用包（v1.0.21）
 
-            ### 本版（安装修复）
-            - 回退 v1.0.19 的过度压缩图标 / ditto 打包
-            - **对齐可安装的 v1.0.11**：单套完整质量 AppIcon + 传统 zip 打包
-            - Assets.car 约 0.35–0.4MB；AppIcon 校验防止损坏资源进包
-            - 深色/着色图标文件仍保留在工程内，暂不编入侧载包以保证可安装
+            ### 本版（超星课表识别）
+            - 修复周一/周二竖排「水利工+程造价+二@231+3」串列、碎成缺节次残片
+            - 教室尾号粘合：@231+3→2313、@121+6→1216、@220+9→2209、@2+212→2212
+            - 同列 1-2/3-4 两格同课合并为 1-4；拒绝无 @教室 的半截课名进确认页
+            - 超星 @教室 网格结果不再被 list/lines 残片污染
 
             ### 安装
             1. **优先 `GlassSchedule-sideload-lite.ipa`**
             2. 先删旧 Classio 再装；需要 **iOS 26+**
-            3. 完整版含 Widget，部分证书可能装不上
 
             Bundle ID：`com.billieuphart.glassschedule`

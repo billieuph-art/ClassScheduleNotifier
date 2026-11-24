@@ -449,19 +449,24 @@ enum GridHeuristicParser {
         let centers = sortedCols.map(\.x)
         let spacing = zip(centers, centers.dropFirst()).map { $1 - $0 }.min() ?? 0.12
 
-        // 最近列归属（比中点闭区间更不容易漏掉偏左/偏右的课块文字）
+        // 先严格按列中点边界归属，避免周一/周二窄列串字（「水利工」被粘两次）
         var byWeekday: [Int: [TextItem]] = [:]
         for item in items where item.rect.minY >= headerBottom - 0.004 && item.rect.midX >= leftBoundary - 0.02 {
+            if let day = colBounds.first(where: { $0.value.contains(item.rect.midX) })?.key {
+                byWeekday[day, default: []].append(item)
+                continue
+            }
+            // 落在边界缝上的再就近，阈值收紧防止跨列
             guard let nearest = sortedCols.min(by: { abs($0.x - item.rect.midX) < abs($1.x - item.rect.midX) }) else {
                 continue
             }
-            if abs(nearest.x - item.rect.midX) > spacing * 0.62 { continue }
+            if abs(nearest.x - item.rect.midX) > spacing * 0.42 { continue }
             byWeekday[nearest.day, default: []].append(item)
         }
 
         var drafts: [CourseDraft] = []
         for (day, columnItems) in byWeekday {
-            let blocks = verticalBlocks(from: columnItems)
+            let blocks = chaoxingVerticalBlocks(from: columnItems)
             for (blockIndex, block) in blocks.enumerated() {
                 let nextTop = blockIndex + 1 < blocks.count ? blocks[blockIndex + 1].map(\.rect.minY).min() : nil
                 let periods = periodsForBlock(block, rowCenters: rowCenters, nextTop: nextTop)
@@ -548,12 +553,8 @@ enum GridHeuristicParser {
                 if classroom.count + digits.count <= 6 { classroom += digits }
             }
         } else {
-            // 无 @ 时：课名 + 尾部数字当教室
-            var parts = lines
-            if let last = parts.last, last.allSatisfy(\.isNumber), last.count >= 3 {
-                classroom = parts.removeLast()
-            }
-            name = OCRTextJoiner.join(parts)
+            // 无 @：不收残片进确认页（「水利工」「程造价」曾因此污染周二）
+            return nil
         }
 
         name = OCRCleanup.sanitizeCourseName(name)
@@ -561,6 +562,8 @@ enum GridHeuristicParser {
         classroom = OCRCleanup.sanitizeClassroom(classroom)
 
         guard name.count >= 2 else { return nil }
+        // 教室至少 3 位数字/字母，避免 @2 这类截断半成品
+        guard classroom.range(of: #"[A-Za-z0-9\-－]{3,}"#, options: .regularExpression) != nil else { return nil }
         guard !OCRCleanup.isBogusCourseName(name) else { return nil }
         guard Patterns.firstMatch(Patterns.junkName, in: name) == nil else { return nil }
 
@@ -571,6 +574,69 @@ enum GridHeuristicParser {
         }
         draft.complete(with: slots, preferPeriods: true)
         return draft.isValid ? draft : nil
+    }
+
+    /// 超星竖排：先按间距聚行，再在「课程@教室」完整后切开，防止 1-2/3-4 两格粘成乱码。
+    private static func chaoxingVerticalBlocks(from items: [TextItem]) -> [[TextItem]] {
+        let sorted = items.sorted { $0.rect.minY < $1.rect.minY }
+        guard !sorted.isEmpty else { return [] }
+        let heights = sorted.map(\.rect.height).sorted()
+        let lineHeight = heights.dropFirst(max(0, heights.count / 3)).first ?? 0.02
+
+        var clusters: [[TextItem]] = []
+        for item in sorted {
+            if let last = clusters.last?.last {
+                let gap = item.rect.minY - last.rect.maxY
+                // 同格内行距通常很小；两格之间空隙更大
+                if gap < max(lineHeight * 1.85, 0.018) {
+                    clusters[clusters.count - 1].append(item)
+                    continue
+                }
+            }
+            clusters.append([item])
+        }
+
+        // 过碎的纯数字行（教室尾号）并入上一簇
+        var merged: [[TextItem]] = []
+        for cluster in clusters {
+            let texts = cluster.map(\.text)
+            let onlyDigits = texts.allSatisfy { $0.trimmingCharacters(in: .whitespaces).allSatisfy(\.isNumber) }
+                && texts.joined().count <= 3
+            if onlyDigits, !merged.isEmpty {
+                merged[merged.count - 1].append(contentsOf: cluster)
+            } else {
+                merged.append(cluster)
+            }
+        }
+
+        // 一簇里若有多门「@教室」，按 @ 课程切开
+        return merged.flatMap(splitMultipleAtRoomClusters)
+    }
+
+    private static func splitMultipleAtRoomClusters(_ items: [TextItem]) -> [[TextItem]] {
+        let sorted = items.sorted { $0.rect.minY < $1.rect.minY }
+        guard sorted.count >= 2 else { return [sorted] }
+
+        var result: [[TextItem]] = []
+        var current: [TextItem] = []
+
+        func isComplete(_ group: [TextItem]) -> Bool {
+            let glued = OCRTextJoiner.join(group.map(\.text))
+            return glued.range(of: #".+@[A-Za-z0-9\-－]{3,}"#, options: .regularExpression) != nil
+        }
+
+        for item in sorted {
+            let t = item.text.trimmingCharacters(in: .whitespaces)
+            if !current.isEmpty, isComplete(current), !t.allSatisfy(\.isNumber) {
+                // 上一门已完整，且本行不是教室尾号 → 新课
+                result.append(current)
+                current = [item]
+            } else {
+                current.append(item)
+            }
+        }
+        if !current.isEmpty { result.append(current) }
+        return result.filter { !$0.isEmpty }
     }
 
     private static func verticalBlocks(from items: [TextItem]) -> [[TextItem]] {

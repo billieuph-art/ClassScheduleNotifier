@@ -160,8 +160,28 @@ enum OCRCleanup {
         if isTeacherStack(t) { return true }
         // 纯人名绝不能当课名
         if looksLikePersonNameOnly(t) { return true }
-        // 过短残片（程造价 可保留 3 字以上含「造/学/课」等；纯 2 字且无课名提示则拒）
+        // 过短残片
         if t.count <= 2, !["体育", "自习"].contains(t) { return true }
+        // 超星竖排常见半截课名（无头无尾），不得进确认页
+        let halfFragments: Set<String> = [
+            "水利工", "程造价", "水利造", "价软件", "程造价软件",
+            "水利工水利工水利造", "程造价程造价软件",
+        ]
+        if halfFragments.contains(t) { return true }
+        // 「X X X」重复粘连：同一词缀出现 ≥2 次且总长偏短
+        if t.count >= 6, t.count <= 18 {
+            for unitLen in 2...4 {
+                let unit = String(t.prefix(unitLen))
+                if unit.count < 2 { continue }
+                var hits = 0
+                var rest = t
+                while rest.hasPrefix(unit) {
+                    rest = String(rest.dropFirst(unit.count))
+                    hits += 1
+                }
+                if hits >= 2, !rest.isEmpty, rest.count <= unitLen + 2 { return true }
+            }
+        }
         return false
     }
 
