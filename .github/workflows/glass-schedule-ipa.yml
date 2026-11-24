@@ -65,7 +65,7 @@ jobs:
             local out_ipa="$2"
             local include_plugins="$3"
 
-            rm -rf "_pkg_$label" "Payload"
+            rm -rf "_pkg_$label" "Payload" "$out_ipa"
             mkdir -p "_pkg_$label"
             ditto "$SRC" "_pkg_$label/GlassSchedule.app"
             local APP="_pkg_$label/GlassSchedule.app"
@@ -77,10 +77,13 @@ jobs:
 
             if [ "$include_plugins" != "yes" ]; then
               rm -rf "$APP/PlugIns"
-              echo "Lite: removed PlugIns (no Live Activity / widgets)"
+              # lite 无 Widget/Live Activity：去掉声明，避免部分安装器拒装
+              plutil -remove NSSupportsLiveActivities "$APP/Info.plist" 2>/dev/null || true
+              plutil -remove NSSupportsLiveActivitiesFrequentUpdates "$APP/Info.plist" 2>/dev/null || true
+              echo "Lite: removed PlugIns + Live Activities Info.plist keys"
             fi
 
-            # 与可安装的 v1.0.7 一致：先扩展后主包 ad-hoc 签名（含 DER）
+            # 与可安装的 v1.0.7/1.0.11 一致：先扩展后主包 ad-hoc 签名（含 DER）
             if [ -d "$APP/PlugIns" ]; then
               for appex in "$APP"/PlugIns/*.appex; do
                 [ -d "$appex" ] || continue
@@ -95,19 +98,20 @@ jobs:
               find "$APP/PlugIns" -type f -name 'GlassScheduleWidgets' -exec chmod +x {} \;
             fi
 
+            # ditto 打 IPA 比 zip 更贴近 Apple 工具链，减少侧载解析异常
             mkdir -p Payload
             ditto "$APP" Payload/GlassSchedule.app
-            zip -r -y -q "$out_ipa" Payload
+            ditto -c -k --sequesterRsrc --keepParent Payload "$out_ipa"
             ls -lh "$out_ipa"
 
             echo "---- $label summary ----"
-            plutil -p Payload/GlassSchedule.app/Info.plist | grep -E "CFBundleIdentifier|CFBundleDisplayName|MinimumOSVersion|CFBundleShortVersionString|UIBackgroundModes" || true
+            plutil -p Payload/GlassSchedule.app/Info.plist | grep -E "CFBundleIdentifier|CFBundleDisplayName|MinimumOSVersion|CFBundleShortVersionString|UIBackgroundModes|NSSupportsLiveActivities" || true
+            echo "Assets.car=$(stat -f%z Payload/GlassSchedule.app/Assets.car)"
             if [ -d Payload/GlassSchedule.app/PlugIns ]; then
               find Payload/GlassSchedule.app/PlugIns -name Info.plist -exec plutil -p {} \; | grep CFBundleIdentifier || true
             else
               echo "(no PlugIns)"
             fi
-            # 确认有签名 blob（与 1.0.7 相同策略）
             codesign -d --verbose=4 Payload/GlassSchedule.app 2>&1 | head -20 || true
             rm -rf Payload
           }
@@ -132,25 +136,23 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: glass-schedule-sideload-${{ github.run_number }}
-          name: Classio 侧载版 IPA ${{ github.run_number }}（v1.0.18）
+          name: Classio 侧载版 IPA ${{ github.run_number }}（v1.0.19）
           target_commitish: ${{ github.sha }}
           prerelease: true
           files: |
             GlassSchedule/GlassSchedule-sideload.ipa
             GlassSchedule/GlassSchedule-sideload-lite.ipa
           body: |
-            ## Classio 侧载专用包（v1.0.18）
+            ## Classio 侧载专用包（v1.0.19）
 
-            ### 本版
-            - **识别大修**：列表横排 / 网格竖排 / 时间轴三种版式分别解析
-            - 课名与教师不再粘连；过滤「星期一」等伪课程
-            - 教室支持「理教楼 A-201」「教 A-101」「机房 C-301」
-            - **深浅色图标**再次启用（随系统外观切换）
-            - 单双周自动识别 + 手动覆盖
+            ### 本版（安装修复）
+            - **压缩深浅色/着色 AppIcon**，把 Assets.car 压回可安装量级（对齐 v1.0.11）
+            - IPA 改用 `ditto` 打包；lite 去掉 Live Activities 声明
+            - 发布前强制 Assets.car ≤ 600KB
 
-            ### 安装
-            1. 先删旧 App 再装；需要 **iOS 26+**
-            2. 装不上完整版时先试 lite
-            3. 完整版保留 Widget，勿用 Live Container
+            ### 安装（请先试 lite）
+            1. **先装 `GlassSchedule-sideload-lite.ipa`**（无小组件，侧载成功率最高）
+            2. 先删旧 Classio 再装；需要 **iOS 26+**
+            3. 完整版含 Widget/灵动岛，部分免费证书可能装不上
 
             Bundle ID：`com.billieuphart.glassschedule`

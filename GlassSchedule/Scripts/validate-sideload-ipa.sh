@@ -108,12 +108,25 @@ fi
 test -f "$APP/Assets.car"
 test -f "$APP/AppIcon60x60@2x.png"
 
-# 含 Light/Dark/Tinted 图标时 Assets.car 约 0.4–1.1MB；超过 1.3MB 再拦截
+# 可安装的 v1.0.11 Assets.car≈377KB（单外观）。多外观压缩后应压回 ≤600KB，
+# 过大时常见侧载安装失败（与历史 1.0.8/1.0.9/1.0.18 一致）。
 CAR_SIZE=$(stat -f%z "$APP/Assets.car" 2>/dev/null || stat -c%s "$APP/Assets.car")
 echo "Assets.car=$CAR_SIZE"
-if [ "$CAR_SIZE" -gt 1300000 ]; then
-  echo "ERROR: Assets.car too large ($CAR_SIZE)"
+if [ "$CAR_SIZE" -gt 600000 ]; then
+  echo "ERROR: Assets.car too large ($CAR_SIZE > 600000); compress AppIcon PNGs"
   exit 1
+fi
+
+# lite 无扩展时不应再声明 Live Activities（部分安装器会因此拒装）
+if [ "$LITE" = "yes" ]; then
+  if plutil -extract NSSupportsLiveActivities raw -o - "$APP/Info.plist" >/dev/null 2>&1; then
+    echo "ERROR: lite IPA still declares NSSupportsLiveActivities"
+    exit 1
+  fi
+  if plutil -extract NSSupportsLiveActivitiesFrequentUpdates raw -o - "$APP/Info.plist" >/dev/null 2>&1; then
+    echo "ERROR: lite IPA still declares NSSupportsLiveActivitiesFrequentUpdates"
+    exit 1
+  fi
 fi
 
 echo "==> IPA validation passed"
