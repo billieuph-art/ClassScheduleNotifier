@@ -227,16 +227,20 @@ enum HorizontalGridParser {
                 if line.isEmpty { continue }
             }
 
-            if line.contains("教师") || line.contains("老师") || line.contains("授课") {
-                if teacher.isEmpty {
-                    var value = line.replacingOccurrences(
-                        of: #"^(?:教师|授课|老师)[:：]?\s*"#,
-                        with: "",
-                        options: .regularExpression
-                    )
-                    value = value.replacingOccurrences(of: #"(?:老师|教授)$"#, with: "", options: .regularExpression)
-                    value = value.trimmingCharacters(in: .whitespacesAndNewlines)
-                    teacher = value.count >= 2 ? value : line
+            if let split = splitInlineTeacher(line) {
+                if !split.course.isEmpty { nameParts.append(split.course) }
+                if teacher.isEmpty { teacher = split.teacher }
+                continue
+            }
+            if line.hasSuffix("老师") || line.hasSuffix("教授") {
+                let value = line.replacingOccurrences(of: #"(?:老师|教授)$"#, with: "", options: .regularExpression)
+                if let split = peelTrailingTeacher(from: value) {
+                    nameParts.append(split.name)
+                    if teacher.isEmpty { teacher = split.teacher }
+                } else if OCRCleanup.looksLikePersonNameOnly(value) {
+                    if teacher.isEmpty { teacher = value }
+                } else {
+                    nameParts.append(value)
                 }
                 continue
             }
@@ -311,6 +315,18 @@ enum HorizontalGridParser {
               let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
               let range = Range(match.range, in: text) else { return nil }
         return (String(text[range]), match.range)
+    }
+
+    private static func splitInlineTeacher(_ text: String) -> (course: String, teacher: String)? {
+        let pattern = #"^(.*?)(?:任课教师|教师|授课)[:：]\s*(.+)$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let courseRange = Range(match.range(at: 1), in: text),
+              let teacherRange = Range(match.range(at: 2), in: text) else { return nil }
+        return (
+            String(text[courseRange]).trimmingCharacters(in: .whitespacesAndNewlines),
+            String(text[teacherRange]).trimmingCharacters(in: .whitespacesAndNewlines)
+        )
     }
 
     private static func peelTrailingTeacher(from raw: String) -> (name: String, teacher: String)? {
