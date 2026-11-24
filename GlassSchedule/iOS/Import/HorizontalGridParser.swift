@@ -30,8 +30,8 @@ enum HorizontalGridParser {
         guard items.count >= 4 else { return [] }
         let dayItems = items.compactMap { item -> (Int, TextItem)? in
             let text = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let day = WeekdayName.detect(in: text, allowBare: false),
-                  item.rect.midX < 0.36 else { return nil }
+            guard text.count <= 10,
+                  let day = WeekdayName.detect(in: text, allowBare: false) else { return nil }
             return (day, item)
         }
         guard dayItems.count >= 2 else { return [] }
