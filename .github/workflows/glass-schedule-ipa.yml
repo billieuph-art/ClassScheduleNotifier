@@ -123,14 +123,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: glass-schedule-sideload-${{ github.run_number }}
-          name: Classio 侧载版 IPA ${{ github.run_number }}（v1.0.12）
+          name: Classio 侧载版 IPA ${{ github.run_number }}（v1.0.13）
           target_commitish: ${{ github.sha }}
           prerelease: true
           files: |
             GlassSchedule/GlassSchedule-sideload.ipa
             GlassSchedule/GlassSchedule-sideload-lite.ipa
           body: |
-            ## Classio 侧载专用包（v1.0.12）
+            ## Classio 侧载专用包（v1.0.13）
 
             ### 本版
             - **识别大修**：列表横排 / 网格竖排 / 时间轴三种版式分别解析

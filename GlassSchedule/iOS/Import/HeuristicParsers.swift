@@ -72,7 +72,7 @@ private enum Patterns {
     )
     static let teacherLoose = try! NSRegularExpression(pattern: "^(?:[\\p{Han}]{2,4}|辅导员)(?:老师|教授)?$")
     static let junkName = try! NSRegularExpression(
-        pattern: "^(?:星期?[一二三四五六日天]|周[一二三四五六日天]|今天|明天|第?\\d+(?:[-－—]\\d+)?节|上午|下午|晚上|备注|课程|教室|教师|时间|节次|地点|节数|时间段|课程名|周次|—|-|－|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)$",
+        pattern: "^(?:星期?[一二三四五六日天]|周[一二三四五六日天]|今天|明天|第?\\d+(?:[-－—]\\d+)?节|上午|下午|晚上|备注|课程|教室|教师|时间|节次|地点|节数|时间段|课程名|周次|每周|(?:[\\(（]?每周[\\)）]?)+|课程名教师教室|时间段课程名教师教室周次|—|-|－|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)$",
         options: [.caseInsensitive]
     )
     static let dateHeader = try! NSRegularExpression(pattern: "(\\d{1,2})[/.-](\\d{1,2})")
@@ -156,14 +156,18 @@ private struct CellFields {
             teacher = teacherText.replacingOccurrences(of: "老师|教授", with: "", options: .regularExpression)
         }
 
-        // 课名：优先非教师/非教室行；若分类过狠导致为空，用最长一行
+        // 课名：优先非教师/非教室行；若分类过狠导致为空，用最长一行（排除伪课程）
         name = nameLines
-            .filter { Patterns.firstMatch(Patterns.junkName, in: $0) == nil }
+            .filter { Patterns.firstMatch(Patterns.junkName, in: $0) == nil && !ScheduleJunk.isNonCourseText($0) }
             .joined()
         if name.count < 2 {
-            name = lines.max(by: { $0.count < $1.count }) ?? ""
+            let fallback = lines
+                .filter { Patterns.firstMatch(Patterns.junkName, in: $0) == nil && !ScheduleJunk.isNonCourseText($0) }
+                .max(by: { $0.count < $1.count }) ?? ""
+            name = fallback
         }
         name = name.replacingOccurrences(of: #"^[\[【\(（]+|[\]】\)）]+$"#, with: "", options: .regularExpression)
+        if ScheduleJunk.isNonCourseText(name) { name = "" }
 
         // 仍缺字段时，对剩余拼接文本补抽
         if classroom.isEmpty || teacher.isEmpty || weeks.isEmpty || name.count < 2 {
@@ -301,7 +305,10 @@ private struct CellFields {
     }
 
     private func isWeekLine(_ line: String) -> Bool {
-        line.contains("周") && (
+        if line.contains("每周") { return true }
+        let compact = line.replacingOccurrences(of: #"[（()）\s]"#, with: "", options: .regularExpression)
+        if compact == "每周" || compact.range(of: #"^(每周)+$"#, options: .regularExpression) != nil { return true }
+        return line.contains("周") && (
             line.contains("单") || line.contains("双")
             || Patterns.firstMatch(Patterns.weeks, in: line) != nil
             || line.range(of: #"\d"#, options: .regularExpression) != nil
@@ -391,7 +398,7 @@ enum GridHeuristicParser {
                 let nextTop = blockIndex + 1 < columnBlocks.count ? columnBlocks[blockIndex + 1].map(\.rect.minY).min() : nil
                 let fields = CellFields(lines: block.map(\.text))
                 guard fields.name.count >= 2, Patterns.firstMatch(Patterns.junkName, in: fields.name) == nil else { continue }
-                guard !ScheduleJunk.isDayOrHeader(fields.name) else { continue }
+                guard !ScheduleJunk.isNonCourseText(fields.name) else { continue }
                 // 拒绝把教室号当课名
                 guard !fields.name.contains("@"), !(fields.name.count <= 6 && fields.name.hasPrefix("二")) else { continue }
                 // 课名里不应主要是楼名（如「理教楼」）
@@ -612,7 +619,7 @@ enum LineHeuristicParser {
                 continue
             }
             guard let day = weekday ?? currentWeekday, fields.name.count >= 2,
-                  !ScheduleJunk.isDayOrHeader(fields.name),
+                  !ScheduleJunk.isNonCourseText(fields.name),
                   fields.periods != nil || fields.times != nil else { continue }
             var draft = CourseDraft(name: fields.name, classroom: fields.classroom, teacher: fields.teacher,
                                     weekday: day, weeks: fields.weeks)
@@ -653,7 +660,7 @@ enum LineHeuristicParser {
             teacher = rest.remove(at: i).replacingOccurrences(of: "老师", with: "")
         }
         let name = rest.joined()
-        guard name.count >= 2, !ScheduleJunk.isDayOrHeader(name) else { return nil }
+        guard name.count >= 2, !ScheduleJunk.isNonCourseText(name) else { return nil }
         var draft = CourseDraft(name: name, classroom: classroom, teacher: teacher, weekday: day,
                                 weeks: WeeksParser.parse(weeksText))
         if let range = time.range(of: #"(\d{1,2})[:：](\d{2})\s*[-－—~～至到]\s*(\d{1,2})[:：](\d{2})"#, options: .regularExpression) {

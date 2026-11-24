@@ -53,6 +53,7 @@ enum ListScheduleParser {
 
     private static func looksLikeColumnHeader(_ texts: [String]) -> Bool {
         let blob = texts.joined()
+        if ScheduleJunk.isColumnHeaderBlob(blob) { return true }
         let keys = ["时间", "课程", "教师", "教室", "周次", "地点", "节次"]
         return keys.filter { blob.contains($0) }.count >= 2
     }
@@ -91,7 +92,7 @@ enum ListScheduleParser {
         name = sanitizeCourseName(name)
         teacher = sanitizeTeacher(teacher)
         classroom = sanitizeClassroom(classroom)
-        guard name.count >= 2, !ScheduleJunk.isDayOrHeader(name) else { return nil }
+        guard name.count >= 2, !ScheduleJunk.isNonCourseText(name) else { return nil }
 
         var draft = CourseDraft(name: name, classroom: classroom, teacher: teacher, weekday: day,
                                 weeks: WeeksParser.parse(weeksText))
@@ -180,8 +181,10 @@ enum ListScheduleParser {
     }
 
     private static func sanitizeTeacher(_ raw: String) -> String {
-        raw.replacingOccurrences(of: "老师|教授", with: "", options: .regularExpression)
+        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let stripped = t.replacingOccurrences(of: "老师|教授", with: "", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        return stripped.count >= 2 ? stripped : t
     }
 
     private static func sanitizeClassroom(_ raw: String) -> String {
@@ -241,28 +244,53 @@ enum TimelineScheduleParser {
         let axis = fitTimeAxis(timeTicks)
         var drafts: [CourseDraft] = []
 
-        // 课名候选：不含纯时间、不含单独星期
-        let candidates = items.filter { item in
+        // 课名锚点：排除星期/时间/周次标签/教师|教室行
+        let nameAnchors = items.filter { item in
             let t = item.text.trimmingCharacters(in: .whitespaces)
             guard t.count >= 2 else { return false }
-            if ScheduleJunk.isDayOrHeader(t) { return false }
-            if t.range(of: #"^\d{1,2}[:：]\d{2}$"#, options: .regularExpression) != nil { return false }
+            if ScheduleJunk.isNonCourseText(t) { return false }
+            if t.contains("|") { return false }
             if item.rect.midX < 0.18 { return false }
-            return true
+            // 课名通常更粗、更长；排除纯教师后缀
+            if t.hasSuffix("老师") || t.hasSuffix("教授") { return false }
+            return looksLikeCourseTitle(t)
         }
 
-        // 按垂直聚集成「课块」
-        let blocks = clusterBlocks(candidates)
-        for block in blocks {
-            guard let day = nearestDay(for: block.map(\.rect.midY).reduce(0, +) / CGFloat(block.count), bands: dayBands) else { continue }
-            let texts = block.sorted { $0.rect.minY < $1.rect.minY }.map(\.text)
-            let parsed = parseBlockTexts(texts)
-            guard parsed.name.count >= 2, !ScheduleJunk.isDayOrHeader(parsed.name) else { continue }
+        for anchor in nameAnchors {
+            guard let day = nearestDay(for: anchor.rect.midY, bands: dayBands) else { continue }
+            // 只收同一课块：纵向紧邻、横向几乎对齐的附属文字
+            let satellites = items.filter { item in
+                guard item.page == anchor.page else { return false }
+                if item.rect == anchor.rect && item.text == anchor.text { return false }
+                let t = item.text.trimmingCharacters(in: .whitespaces)
+                guard !t.isEmpty else { return false }
+                if t.range(of: #"^\d{1,2}[:：]\d{2}$"#, options: .regularExpression) != nil { return false }
+                let isMeta = t.contains("|") || isWeekLabel(t) || t.hasSuffix("老师") || t.hasSuffix("教授")
+                    || t.contains("楼") || t.contains("馆") || t.contains("机房") || t.contains("教 ")
+                // 附属行可以是周次/教师|教室；其它非课程噪声丢掉
+                if !isMeta, ScheduleJunk.isNonCourseText(t) { return false }
+                if WeekdayName.detect(in: t, allowBare: false) != nil, t.count <= 6 { return false }
+                let dy = abs(item.rect.midY - anchor.rect.midY)
+                let dx = abs(item.rect.midX - anchor.rect.midX)
+                // 课块内：教师/周次在课名正下方，水平偏移很小
+                if dy < 0.055 && dx < 0.045 { return true }
+                // 允许略宽的教室/周次行
+                if dy < 0.07 && dx < 0.06 && isMeta { return true }
+                return false
+            }
 
-            let midX = block.map(\.rect.midX).reduce(0, +) / CGFloat(block.count)
-            let width = (block.map(\.rect.maxX).max() ?? midX) - (block.map(\.rect.minX).min() ?? midX)
-            let startMin = axis.minutes(at: midX - width * 0.35)
-            let endMin = axis.minutes(at: midX + width * 0.35)
+            var texts = [anchor.text] + satellites.sorted { $0.rect.minY < $1.rect.minY }.map(\.text)
+            texts = dedupeTexts(texts)
+            let parsed = parseBlockTexts(texts)
+            guard parsed.name.count >= 2, !ScheduleJunk.isNonCourseText(parsed.name) else { continue }
+
+            let blockRects = [anchor.rect] + satellites.map(\.rect)
+            let midX = blockRects.map(\.midX).reduce(0, +) / CGFloat(blockRects.count)
+            let minX = blockRects.map(\.minX).min() ?? midX
+            let maxX = blockRects.map(\.maxX).max() ?? midX
+            let width = max(0.04, maxX - minX)
+            let startMin = axis.minutes(at: midX - width * 0.4)
+            let endMin = axis.minutes(at: midX + width * 0.4)
 
             var draft = CourseDraft(name: parsed.name, classroom: parsed.classroom, teacher: parsed.teacher,
                                     weekday: day, weeks: parsed.weeks)
@@ -273,7 +301,37 @@ enum TimelineScheduleParser {
             draft.complete(with: slots, preferPeriods: false)
             if draft.isValid { drafts.append(draft) }
         }
-        return drafts
+        return dedupeTimeline(drafts)
+    }
+
+    private static func looksLikeCourseTitle(_ t: String) -> Bool {
+        if ScheduleJunk.isNonCourseText(t) { return false }
+        // 至少两个汉字，且不只是「教 A-101」这类地点
+        let han = t.filter { $0.unicodeScalars.first.map { (0x4E00...0x9FFF).contains($0.value) } == true }
+        guard han.count >= 2 else { return false }
+        if t.contains("楼") || t.contains("馆") || t.contains("机房") {
+            // 「体育馆」单独出现不算课名；「体育 (乒乓球)」可以
+            if han.count <= 3 && (t.contains("楼") || t.hasSuffix("馆") || t.contains("机房")) { return false }
+        }
+        return true
+    }
+
+    private static func dedupeTexts(_ texts: [String]) -> [String] {
+        var seen = Set<String>()
+        return texts.filter { seen.insert($0).inserted }
+    }
+
+    private static func dedupeTimeline(_ drafts: [CourseDraft]) -> [CourseDraft] {
+        var result: [CourseDraft] = []
+        for draft in drafts.sorted(by: { $0.name.count > $1.name.count }) {
+            if result.contains(where: {
+                $0.weekday == draft.weekday
+                    && abs($0.startMinutes - draft.startMinutes) < 40
+                    && (namesSimilar($0.name, draft.name) || ($0.classroom == draft.classroom && !$0.classroom.isEmpty))
+            }) { continue }
+            result.append(draft)
+        }
+        return result.sorted { ($0.weekday, $0.startMinutes) < ($1.weekday, $1.startMinutes) }
     }
 
     private static func bareDayBox(_ t: String) -> Int? {
@@ -320,66 +378,84 @@ enum TimelineScheduleParser {
         TimeAxis(samples: ticks.map { (minutes: $0.0, x: $0.1) })
     }
 
-    private static func clusterBlocks(_ items: [TextItem]) -> [[TextItem]] {
-        let sorted = items.sorted { $0.rect.minY < $1.rect.minY || ($0.rect.minY == $1.rect.minY && $0.rect.minX < $1.rect.minX) }
-        var blocks: [[TextItem]] = []
-        for item in sorted {
-            if let last = blocks.last,
-               let seed = last.first,
-               abs(item.rect.midY - seed.rect.midY) < 0.045,
-               abs(item.rect.midX - seed.rect.midX) < 0.12 {
-                blocks[blocks.count - 1].append(item)
-            } else {
-                var matched: Int?
-                for i in blocks.indices.reversed() {
-                    let block = blocks[i]
-                    let midY = block.map(\.rect.midY).reduce(0, +) / CGFloat(max(block.count, 1))
-                    let midX = block.map(\.rect.midX).reduce(0, +) / CGFloat(max(block.count, 1))
-                    if abs(item.rect.midY - midY) < 0.04 && abs(item.rect.midX - midX) < 0.1 {
-                        matched = i
-                        break
-                    }
-                }
-                if let matched {
-                    blocks[matched].append(item)
-                } else {
-                    blocks.append([item])
-                }
-            }
-        }
-        return blocks.filter { $0.count >= 1 }
-    }
-
     private static func parseBlockTexts(_ texts: [String]) -> (name: String, teacher: String, classroom: String, weeks: [Int]) {
         var name = "", teacher = "", classroom = "", weeks: [Int] = []
-        for (i, raw) in texts.enumerated() {
+        for raw in texts {
             let t = raw.trimmingCharacters(in: .whitespaces)
-            if t.hasPrefix("(") || t.hasPrefix("（") || t.contains("每周") || (t.contains("周") && t.range(of: #"\d"#, options: .regularExpression) != nil) {
-                weeks = WeeksParser.parse(t)
+            guard !t.isEmpty else { continue }
+
+            // 周次行：每周 / (第 1, 3, 5 周) / 单双周 —— 绝不当课名
+            if isWeekLabel(t) {
+                let parsed = WeeksParser.parse(t)
+                if !parsed.isEmpty { weeks = parsed }
                 continue
             }
+            // 「张老师 | 教 A-101」——字段行，绝不当课名
             if t.contains("|") {
                 let parts = t.split(separator: "|").map { $0.trimmingCharacters(in: .whitespaces) }
                 if parts.count >= 2 {
-                    teacher = parts[0].replacingOccurrences(of: "老师", with: "")
-                    classroom = parts[1...].joined(separator: " ")
+                    if teacher.isEmpty {
+                        teacher = sanitizeTeacherKeep(parts[0])
+                    }
+                    let roomPart = parts[1...].joined(separator: " ")
+                    if classroom.isEmpty || classroom.count < roomPart.count {
+                        classroom = roomPart
+                    }
                 }
                 continue
             }
-            if i == 0 {
+            if ScheduleJunk.isNonCourseText(t) { continue }
+            if name.isEmpty && looksLikeCourseTitle(t) {
                 name = t
-            } else if teacher.isEmpty && (t.hasSuffix("老师") || t.range(of: #"^[\p{Han}]{2,4}$"#, options: .regularExpression) != nil) {
-                teacher = t.replacingOccurrences(of: "老师", with: "")
-            } else if classroom.isEmpty {
+                continue
+            }
+            if teacher.isEmpty && (t.hasSuffix("老师") || t.hasSuffix("教授") || t == "体育组" || t == "指导教师组" || t == "辅导员"
+                                    || t.range(of: #"^[\p{Han}]{2,4}$"#, options: .regularExpression) != nil) {
+                teacher = sanitizeTeacherKeep(t)
+                continue
+            }
+            if classroom.isEmpty && (t.contains("楼") || t.contains("馆") || t.contains("机房") || t.contains("教")
+                                     || t.range(of: #"[A-Za-z]\-?\d{2,4}"#, options: .regularExpression) != nil) {
                 classroom = t
             }
         }
         return (name, teacher, classroom, weeks)
     }
+
+    private static func isWeekLabel(_ t: String) -> Bool {
+        if t.contains("每周") { return true }
+        if t.hasPrefix("(") || t.hasPrefix("（") { return true }
+        if t.contains("周") && (t.contains("单") || t.contains("双") || t.range(of: #"\d"#, options: .regularExpression) != nil) {
+            return true
+        }
+        return false
+    }
+
+    private static func sanitizeTeacherKeep(_ raw: String) -> String {
+        var t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let stripped = t.replacingOccurrences(of: "老师|教授", with: "", options: .regularExpression)
+        // 「刘老师」剥成「刘」太短，保留原样
+        if stripped.count >= 2 { return stripped }
+        return t.replacingOccurrences(of: "老师$", with: "", options: .regularExpression)
+    }
+
+    private static func namesSimilar(_ a: String, _ b: String) -> Bool {
+        let left = a.replacingOccurrences(of: "\\s", with: "", options: .regularExpression)
+        let right = b.replacingOccurrences(of: "\\s", with: "", options: .regularExpression)
+        if left.isEmpty || right.isEmpty { return false }
+        if left == right || left.contains(right) || right.contains(left) { return true }
+        return left.prefix(2) == right.prefix(2) && abs(left.count - right.count) <= 6
+    }
 }
 
 enum ScheduleJunk {
+    /// 星期名、表头、节次标签等，绝不能当课名。
     static func isDayOrHeader(_ name: String) -> Bool {
+        isNonCourseText(name)
+    }
+
+    /// 更宽的「非课程」判定：含「每周」堆叠、粘连表头、教师|教室串。
+    static func isNonCourseText(_ name: String) -> Bool {
         let t = name.trimmingCharacters(in: .whitespacesAndNewlines)
         if t.isEmpty { return true }
         let lowered = t.lowercased()
@@ -390,8 +466,50 @@ enum ScheduleJunk {
         if t.range(of: #"^[一二三四五六日天]、?\s*星期"#, options: .regularExpression) != nil { return true }
         if t.range(of: #"^第?\d{1,2}([-－—~～]\d{1,2})?节$"#, options: .regularExpression) != nil { return true }
         if t.range(of: #"^\d{1,2}[:：]\d{2}([-－—~～]\d{1,2}[:：]\d{2})?$"#, options: .regularExpression) != nil { return true }
-        let headers = ["时间段", "课程名", "教师", "教室", "周次", "本学期课程安排", "课程表", "周课程时间轴"]
+
+        // 「(每周)(每周)」或纯「每周」
+        let weekOnly = t.replacingOccurrences(of: #"[（()）\s]"#, with: "", options: .regularExpression)
+        if weekOnly == "每周" || weekOnly.range(of: #"^(每周)+$"#, options: .regularExpression) != nil { return true }
+        if t.range(of: #"^[\(（]*每周[\)）]*([\(（]*每周[\)）]*)+$"#, options: .regularExpression) != nil { return true }
+
+        if isColumnHeaderBlob(t) { return true }
+
+        let headers = ["时间段", "课程名", "教师", "教室", "周次", "地点", "节次", "时间", "老师",
+                       "本学期课程安排", "课程表", "周课程时间轴", "休息日", "无课程"]
         if headers.contains(t) { return true }
+
+        // 「王老师|教 A-102陈老师|机房…」——教师/教室粘连串，不是课名
+        if t.contains("|") {
+            let withoutPipe = t.replacingOccurrences(of: "|", with: "")
+            if withoutPipe.contains("老师") || withoutPipe.contains("教") || withoutPipe.contains("楼")
+                || withoutPipe.contains("馆") || withoutPipe.contains("机房") {
+                return true
+            }
+        }
+        // 几乎全是「xx老师」重复
+        if t.range(of: #"^(?:[\p{Han}]{1,4}老师\|?)+"#, options: .regularExpression) != nil,
+           !t.contains("大学") && !t.contains("数学") && !t.contains("英语") && t.count <= 24 {
+            let stripped = t.replacingOccurrences(of: #"[\p{Han}]{1,4}老师|\||教\s*[A-Za-z]?\-?\d*"#, with: "", options: .regularExpression)
+            if stripped.count < 2 { return true }
+        }
+        return false
+    }
+
+    /// 「课程名教师教室」「时间段课程名教师教室周次」等粘连表头。
+    static func isColumnHeaderBlob(_ blob: String) -> Bool {
+        let t = blob.replacingOccurrences(of: #"\s+"#, with: "", options: .regularExpression)
+        if t.isEmpty { return false }
+        let keys = ["时间段", "时间", "课程名", "课程", "课名", "教师", "老师", "教室", "地点", "周次", "节次"]
+        let hit = keys.filter { t.contains($0) }.count
+        if hit >= 2 {
+            // 去掉表头词后几乎不剩实质课名
+            var rest = t
+            for k in keys { rest = rest.replacingOccurrences(of: k, with: "") }
+            rest = rest.replacingOccurrences(of: #"[\d:：\-－—~～至到周]"#, with: "", options: .regularExpression)
+            if rest.count <= 2 { return true }
+        }
+        // 精确粘连：课程名教师教室
+        if t.contains("课程名") && (t.contains("教师") || t.contains("教室")) { return true }
         return false
     }
 }

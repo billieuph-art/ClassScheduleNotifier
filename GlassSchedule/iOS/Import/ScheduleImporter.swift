@@ -102,9 +102,9 @@ enum ScheduleImporter {
         }
 
         // 默认：有格子周次（含单双周）则保留；否则截图「第 N 周」只挂该周
-        var scoped = drafts
+        var scoped = drafts.filter { !ScheduleJunk.isNonCourseText($0.name) && $0.isValid }
         let scope = ImportWeekScope.defaultScope(detectedWeek: detectedWeek,
-                                                 hasPerCourseWeeks: drafts.contains { !$0.weeks.isEmpty })
+                                                 hasPerCourseWeeks: scoped.contains { !$0.weeks.isEmpty })
         applyWeekScope(scope, detectedWeek: detectedWeek, to: &scoped)
         return ImportOutcome(drafts: scoped, engine: engine, detectedTeachingWeek: detectedWeek)
     }
@@ -139,11 +139,14 @@ enum ScheduleImporter {
             ("lines", lines),
         ]
         let ranked = candidates
-            .map { ($0.0, dedupe($0.1.filter { !$0.name.isEmpty && !ScheduleJunk.isDayOrHeader($0.name) }), quality($0.1)) }
+            .map { pair -> (String, [CourseDraft], Int) in
+                let clean = dedupe(pair.1.filter { !$0.name.isEmpty && !ScheduleJunk.isNonCourseText($0.name) && $0.isValid })
+                return (pair.0, clean, quality(clean))
+            }
             .sorted { $0.2 > $1.2 }
 
         guard let best = ranked.first, best.2 > 0, !best.1.isEmpty else {
-            return dedupe(list + grid + timeline + lines).filter { !ScheduleJunk.isDayOrHeader($0.name) }
+            return dedupe(list + grid + timeline + lines).filter { !ScheduleJunk.isNonCourseText($0.name) && $0.isValid }
         }
 
         var drafts = best.1
@@ -151,14 +154,14 @@ enum ScheduleImporter {
         if let second = ranked.dropFirst().first, second.2 >= best.2 / 2, !second.1.isEmpty {
             drafts = merge(primary: drafts, secondary: second.1, fillWeeks: true)
         }
-        return drafts.filter { !ScheduleJunk.isDayOrHeader($0.name) }
+        return drafts.filter { !ScheduleJunk.isNonCourseText($0.name) && $0.isValid }
     }
 
     /// 分数越高表示课名越完整、教室越像真的、节次与时间一致。
     private static func quality(_ drafts: [CourseDraft]) -> Int {
         drafts.reduce(0) { score, draft in
             var s = 0
-            if ScheduleJunk.isDayOrHeader(draft.name) { return score - 20 }
+            if ScheduleJunk.isNonCourseText(draft.name) { return score - 30 }
             if draft.name.count >= 4 { s += 3 }
             if draft.name.count >= 6 { s += 3 }
             if draft.name.count >= 8 { s += 2 }

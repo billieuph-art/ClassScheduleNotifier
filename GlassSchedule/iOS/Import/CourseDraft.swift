@@ -70,8 +70,8 @@ struct CourseDraft: Identifiable, Hashable {
     var isValid: Bool {
         let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard cleaned.count >= 2, endMinutes > startMinutes else { return false }
-        if ScheduleJunk.isDayOrHeader(cleaned) { return false }
-        let junk = ["上午", "下午", "晚上", "备注", "课程", "教室", "教师", "时间", "节次", "地点", "节数", "今天", "时间段", "课程名", "周次"]
+        if ScheduleJunk.isNonCourseText(cleaned) { return false }
+        let junk = ["上午", "下午", "晚上", "备注", "课程", "教室", "教师", "时间", "节次", "地点", "节数", "今天", "时间段", "课程名", "周次", "每周"]
         if junk.contains(cleaned) { return false }
         if cleaned.contains("@") { return false }
         if cleaned.hasPrefix("周") && cleaned.count <= 3 { return false }
