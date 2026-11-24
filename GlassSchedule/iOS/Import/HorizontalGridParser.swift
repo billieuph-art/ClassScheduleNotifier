@@ -50,7 +50,10 @@ enum HorizontalGridParser {
 
         let headerBottom = rows.map { $0.band.lowerBound }.min() ?? 0
         let bodyItems = items.filter { item in
-            !isDayLabel(item.text) && item.rect.midY >= headerBottom - 0.015
+            !isDayLabel(item.text)
+                && parsePeriodRange(item.text) == nil
+                && parseTimeRange(item.text) == nil
+                && item.rect.midY >= headerBottom - 0.015
         }
         guard !bodyItems.isEmpty else { return [] }
 
@@ -190,9 +193,19 @@ enum HorizontalGridParser {
         var nameParts: [String] = []
         var time = column.times
 
-        for raw in lines {
+        var skipNextRoomNumber = false
+        for (lineIndex, raw) in lines.enumerated() {
             let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if skipNextRoomNumber {
+                skipNextRoomNumber = false
+                continue
+            }
             guard !line.isEmpty, !isDayLabel(line) else { continue }
+            if isBuildingOnly(line), lineIndex + 1 < lines.count, isRoomNumber(lines[lineIndex + 1]) {
+                classroom = line + " " + lines[lineIndex + 1]
+                skipNextRoomNumber = true
+                continue
+            }
             if let range = parseTimeRange(line) {
                 time = time ?? range
                 continue
