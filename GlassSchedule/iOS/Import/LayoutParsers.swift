@@ -329,14 +329,22 @@ enum TimelineScheduleParser {
                abs(item.rect.midY - seed.rect.midY) < 0.045,
                abs(item.rect.midX - seed.rect.midX) < 0.12 {
                 blocks[blocks.count - 1].append(item)
-            } else if let idx = blocks.indices.last(where: { block in
-                let midY = block.map(\.rect.midY).reduce(0, +) / CGFloat(block.count)
-                let midX = block.map(\.rect.midX).reduce(0, +) / CGFloat(block.count)
-                return abs(item.rect.midY - midY) < 0.04 && abs(item.rect.midX - midX) < 0.1
-            }) {
-                blocks[idx].append(item)
             } else {
-                blocks.append([item])
+                var matched: Int?
+                for i in blocks.indices.reversed() {
+                    let block = blocks[i]
+                    let midY = block.map(\.rect.midY).reduce(0, +) / CGFloat(max(block.count, 1))
+                    let midX = block.map(\.rect.midX).reduce(0, +) / CGFloat(max(block.count, 1))
+                    if abs(item.rect.midY - midY) < 0.04 && abs(item.rect.midX - midX) < 0.1 {
+                        matched = i
+                        break
+                    }
+                }
+                if let matched {
+                    blocks[matched].append(item)
+                } else {
+                    blocks.append([item])
+                }
             }
         }
         return blocks.filter { $0.count >= 1 }

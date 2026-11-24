@@ -114,7 +114,7 @@ private struct CellFields {
     /// 按行分类解析；成功取出课名则返回 true。
     @discardableResult
     private mutating func parseStructuredLines(_ lines: [String]) -> Bool {
-        var remain = lines
+        let remain = lines
         var weekLines: [String] = []
         var roomLines: [String] = []
         var teacherLines: [String] = []
