@@ -195,14 +195,16 @@ enum HorizontalGridParser {
 
         var skipNextRoomNumber = false
         for (lineIndex, raw) in lines.enumerated() {
-            let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            var line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             if skipNextRoomNumber {
                 skipNextRoomNumber = false
                 continue
             }
             guard !line.isEmpty, !isDayLabel(line) else { continue }
+
+            // OCR 有时把「教一楼 302」拆成两个独立文本框。
             if isBuildingOnly(line), lineIndex + 1 < lines.count, isRoomNumber(lines[lineIndex + 1]) {
-                classroom = line + " " + lines[lineIndex + 1]
+                if classroom.isEmpty { classroom = line + " " + lines[lineIndex + 1] }
                 skipNextRoomNumber = true
                 continue
             }
@@ -210,28 +212,36 @@ enum HorizontalGridParser {
                 time = time ?? range
                 continue
             }
-            if line.contains("周"), line.range(of: #"\d"#, options: .regularExpression) != nil
-                || line.contains("单周") || line.contains("双周") || line.contains("每周") {
+            if line.contains("周") && (line.range(of: #"\d"#, options: .regularExpression) != nil
+                || line.contains("单周") || line.contains("双周") || line.contains("每周")) {
                 let parsed = WeeksParser.parse(line)
                 if !parsed.isEmpty { weeks = parsed }
                 continue
             }
-            if isClassroom(line) {
-                if classroom.isEmpty { classroom = line }
-                continue
+
+            // 先从混合行中抽出教室，再处理剩余的课名/教师文字。
+            if let room = extractClassroomFragment(from: line) {
+                if classroom.isEmpty { classroom = room.value }
+                line = (line as NSString).replacingCharacters(in: room.range, with: " ")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if line.isEmpty { continue }
             }
+
             if line.contains("教师") || line.contains("老师") || line.contains("授课") {
                 if teacher.isEmpty {
-                    teacher = line.replacingOccurrences(of: ".*?(教师|老师|授课)[:：]?\\s*", with: "",
-                                                         options: .regularExpression)
+                    var value = line.replacingOccurrences(
+                        of: #"^(?:教师|授课|老师)[:：]?\s*"#,
+                        with: "",
+                        options: .regularExpression
+                    )
+                    value = value.replacingOccurrences(of: #"(?:老师|教授)$"#, with: "", options: .regularExpression)
+                    value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                    teacher = value.count >= 2 ? value : line
                 }
                 continue
             }
-            if OCRCleanup.looksLikePersonNameOnly(line), nameParts.joined().count >= 3 {
-                if teacher.isEmpty { teacher = line }
-                continue
-            }
-            if OCRCleanup.looksLikePersonNameOnly(line), nameParts.isEmpty {
+            if ScheduleJunk.isNonCourseText(line) { continue }
+            if OCRCleanup.looksLikePersonNameOnly(line) {
                 if teacher.isEmpty { teacher = line }
                 continue
             }
@@ -240,6 +250,10 @@ enum HorizontalGridParser {
 
         var name = OCRCleanup.sanitizeCourseName(OCRTextJoiner.join(nameParts))
         name = name.replacingOccurrences(of: #"@.+$"#, with: "", options: .regularExpression)
+        if teacher.isEmpty, let split = peelTrailingTeacher(from: name) {
+            name = split.name
+            teacher = split.teacher
+        }
         teacher = OCRCleanup.sanitizeTeacher(teacher)
         classroom = OCRCleanup.sanitizeClassroom(classroom)
         guard name.count >= 2, !OCRCleanup.isBogusCourseName(name),
@@ -289,6 +303,26 @@ enum HorizontalGridParser {
         let start = values[0] * 60 + values[1]
         let end = values[2] * 60 + values[3]
         return end > start ? (start, end) : nil
+    }
+
+    private static func extractClassroomFragment(from text: String) -> (value: String, range: NSRange)? {
+        let pattern = #"(?:[东南西北]?[\p{Han}]{1,8}(?:楼|馆|机房|教室|实验室)[\p{Han}A-Za-z0-9\-－—]*\s*[A-Za-z]?\-?\d{2,5})|(?:\b[A-Za-z]\-?\d{2,4}\b)|(?:\b\d{3,5}室\b)|(?:体育馆|操场|田径场)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)),
+              let range = Range(match.range, in: text) else { return nil }
+        return (String(text[range]), match.range)
+    }
+
+    private static func peelTrailingTeacher(from raw: String) -> (name: String, teacher: String)? {
+        let characters = Array(raw)
+        for length in [3, 2] where characters.count > length + 2 {
+            let suffix = String(characters.suffix(length))
+            let prefix = String(characters.dropLast(length))
+            if OCRCleanup.looksLikePersonNameOnly(suffix), prefix.count >= 3 {
+                return (prefix, suffix)
+            }
+        }
+        return nil
     }
 
     private static func isBuildingOnly(_ text: String) -> Bool {
