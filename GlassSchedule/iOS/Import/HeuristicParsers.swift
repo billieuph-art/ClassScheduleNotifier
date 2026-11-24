@@ -52,9 +52,9 @@ private enum Patterns {
     static let weeks = try! NSRegularExpression(
         pattern: "(?:第)?\\s*\\d{1,2}(?:\\s*[-－—~～至到]\\s*\\d{1,2})?(?:\\s*[,，、]\\s*\\d{1,2}(?:\\s*[-－—~～至到]\\s*\\d{1,2})?)*\\s*周\\s*(?:[\\(（]\\s*(?:单|双)\\s*周?\\s*[\\)）])?|(?:[\\[(（]\\s*)?(?:第)?\\s*\\d{1,2}(?:\\s*[-－—~～至到]\\s*\\d{1,2})?(?:\\s*[,，、]\\s*\\d{1,2}(?:\\s*[-－—~～至到]\\s*\\d{1,2})?)*\\s*[\\])）]\\s*(?:[\\(（]\\s*(?:单|双)\\s*周?\\s*[\\)）])?|(?:单|双)\\s*周"
     )
-    /// 教室：允许「教一楼 302」「教一楼302」「体育馆」
+    /// 教室：教一楼 302 / 理教楼 A-201 / 教 A-101 / 机房 C-301 / 体育馆二楼
     static let room = try! NSRegularExpression(
-        pattern: "(?:[东南西北]?[\\p{Han}A-Za-z0-9]{0,10}?(?:楼|馆|教|室|区|院|中心|实验|机房|报告厅|阶梯)[\\p{Han}A-Za-z0-9\\-－—]*\\s*\\d{2,5}[A-Za-z0-9\\-－—]*)|(?:体育馆|操场|田径场|游泳馆)|(?:\\b[A-Za-z]{1,3}\\d?[-－—]?\\d{2,4}[A-Za-z]?\\b)|(?:\\b\\d{1,2}[-－—]\\d{3,4}\\b)|(?:教室[:：]?\\s*[\\p{Han}A-Za-z0-9\\-－—\\s]+\\d{2,5})"
+        pattern: "(?:[东南西北]?[\\p{Han}]{0,8}?(?:楼|馆|教|室|区|院|中心|实验|机房|报告厅|阶梯)[\\p{Han}A-Za-z0-9\\-－—]*\\s*[A-Za-z]?\\-?\\d{2,5}[A-Za-z0-9\\-－—]*)|(?:体育馆(?:[一二三四东南北]楼)?)|(?:操场|田径场|游泳馆)|(?:\\b[A-Za-z]\\-?\\d{2,4}[A-Za-z]?\\b)|(?:\\b\\d{1,2}[-－—]\\d{3,4}\\b)|(?:教室[:：]?\\s*[\\p{Han}A-Za-z0-9\\-－—\\s]+\\d{2,5})"
     )
     static let buildingOnly = try! NSRegularExpression(
         pattern: "^[东南西北]?[\\p{Han}A-Za-z0-9]{0,10}?(?:楼|馆|教|室|区|院|中心)[\\p{Han}A-Za-z0-9\\-－—]*$"
@@ -72,7 +72,8 @@ private enum Patterns {
     )
     static let teacherLoose = try! NSRegularExpression(pattern: "^(?:[\\p{Han}]{2,4}|辅导员)(?:老师|教授)?$")
     static let junkName = try! NSRegularExpression(
-        pattern: "^(?:星期?[一二三四五六日天]|周[一二三四五六日天]|今天|明天|第?\\d+节|上午|下午|晚上|备注|课程|教室|教师|时间|节次|地点|节数|—|-|－)$"
+        pattern: "^(?:星期?[一二三四五六日天]|周[一二三四五六日天]|今天|明天|第?\\d+(?:[-－—]\\d+)?节|上午|下午|晚上|备注|课程|教室|教师|时间|节次|地点|节数|时间段|课程名|周次|—|-|－|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)$",
+        options: [.caseInsensitive]
     )
     static let dateHeader = try! NSRegularExpression(pattern: "(\\d{1,2})[/.-](\\d{1,2})")
 
@@ -390,8 +391,11 @@ enum GridHeuristicParser {
                 let nextTop = blockIndex + 1 < columnBlocks.count ? columnBlocks[blockIndex + 1].map(\.rect.minY).min() : nil
                 let fields = CellFields(lines: block.map(\.text))
                 guard fields.name.count >= 2, Patterns.firstMatch(Patterns.junkName, in: fields.name) == nil else { continue }
+                guard !ScheduleJunk.isDayOrHeader(fields.name) else { continue }
                 // 拒绝把教室号当课名
                 guard !fields.name.contains("@"), !(fields.name.count <= 6 && fields.name.hasPrefix("二")) else { continue }
+                // 课名里不应主要是楼名（如「理教楼」）
+                if fields.name.hasSuffix("楼") || fields.name.hasSuffix("馆"), fields.name.count <= 5 { continue }
 
                 var draft = CourseDraft(name: fields.name, classroom: fields.classroom, teacher: fields.teacher,
                                         weekday: weekday, weeks: fields.weeks)
@@ -570,10 +574,29 @@ enum LineHeuristicParser {
         var currentWeekday: Int?
         for rawLine in text.components(separatedBy: .newlines) {
             let line = rawLine.replacingOccurrences(of: "\t", with: " ")
-                .replacingOccurrences(of: "(?<!\\d)[,，]|[,，](?!\\d)", with: " ", options: .regularExpression)
                 .trimmingCharacters(in: .whitespaces)
             guard !line.isEmpty else { continue }
+
+            // 「一、星期一」分区标题
+            if let day = ListScheduleParserDay.detect(line) {
+                currentWeekday = day
+                continue
+            }
+            if ScheduleJunk.isDayOrHeader(line), WeekdayName.detect(in: line, allowBare: false) != nil {
+                currentWeekday = WeekdayName.detect(in: line, allowBare: false)
+                continue
+            }
+
             let weekday = WeekdayName.detect(in: line, allowBare: false) ?? (line.contains("今天") ? SemesterCalendar.weekday(of: .now) : nil)
+            // 空格分列：时间 课名 教师 教室 周次
+            let tokens = line.split(whereSeparator: { $0.isWhitespace }).map(String.init).filter { !$0.isEmpty }
+            if tokens.count >= 3, let day = weekday ?? currentWeekday {
+                if let draft = parseSpacedRow(tokens, day: day, slots: slots) {
+                    drafts.append(draft)
+                    continue
+                }
+            }
+
             var cleaned = line
             for prefix in ["星期", "礼拜", "周"] {
                 for n in ["一", "二", "三", "四", "五", "六", "日", "天"] {
@@ -589,9 +612,8 @@ enum LineHeuristicParser {
                 continue
             }
             guard let day = weekday ?? currentWeekday, fields.name.count >= 2,
-                  fields.periods != nil || fields.times != nil || fields.name.contains(where: { $0.unicodeScalars.first.map { (0x4E00...0x9FFF).contains($0.value) } == true }) else { continue }
-            // 列表行如果没有节次/时间但有 @教室，仍无法落点，跳过
-            guard fields.periods != nil || fields.times != nil else { continue }
+                  !ScheduleJunk.isDayOrHeader(fields.name),
+                  fields.periods != nil || fields.times != nil else { continue }
             var draft = CourseDraft(name: fields.name, classroom: fields.classroom, teacher: fields.teacher,
                                     weekday: day, weeks: fields.weeks)
             if let p = fields.periods { draft.startPeriod = p.0; draft.endPeriod = p.1 }
@@ -600,6 +622,62 @@ enum LineHeuristicParser {
             if draft.isValid { drafts.append(draft) }
         }
         return drafts
+    }
+
+    private static func parseSpacedRow(_ tokens: [String], day: Int, slots: [PeriodSlot]) -> CourseDraft? {
+        var rest = tokens
+        var time = ""
+        if let i = rest.firstIndex(where: { $0.range(of: #"\d{1,2}[:：]\d{2}"#, options: .regularExpression) != nil }) {
+            time = rest.remove(at: i)
+        }
+        var weeksText = ""
+        if let i = rest.firstIndex(where: { $0.contains("周") }) {
+            weeksText = rest.remove(at: i)
+        }
+        var classroom = ""
+        if let i = rest.firstIndex(where: {
+            $0.contains("楼") || $0.contains("馆") || $0.contains("机房")
+                || $0.range(of: #"[A-Za-z]\-?\d{2,4}"#, options: .regularExpression) != nil
+        }) {
+            classroom = rest.remove(at: i)
+            if i < rest.count, rest[i].range(of: #"^[A-Za-z]?\-?\d{2,4}$"#, options: .regularExpression) != nil {
+                classroom += " " + rest.remove(at: i)
+            }
+        }
+        var teacher = ""
+        if let i = rest.firstIndex(where: {
+            $0.hasSuffix("老师") || $0 == "辅导员" || $0.contains("教研室") || $0 == "体育组"
+                || ($0.range(of: #"^[\p{Han}]{2,4}$"#, options: .regularExpression) != nil && $0.count <= 4
+                    && !$0.contains("大学") && !$0.contains("数学") && !$0.contains("英语"))
+        }) {
+            teacher = rest.remove(at: i).replacingOccurrences(of: "老师", with: "")
+        }
+        let name = rest.joined()
+        guard name.count >= 2, !ScheduleJunk.isDayOrHeader(name) else { return nil }
+        var draft = CourseDraft(name: name, classroom: classroom, teacher: teacher, weekday: day,
+                                weeks: WeeksParser.parse(weeksText))
+        if let range = time.range(of: #"(\d{1,2})[:：](\d{2})\s*[-－—~～至到]\s*(\d{1,2})[:：](\d{2})"#, options: .regularExpression) {
+            let nums = String(time[range]).split { !"0123456789".contains($0) }.compactMap { Int($0) }
+            if nums.count >= 4 {
+                draft.startMinutes = nums[0] * 60 + nums[1]
+                draft.endMinutes = nums[2] * 60 + nums[3]
+            }
+        }
+        draft.complete(with: slots, preferPeriods: false)
+        return draft.isValid ? draft : nil
+    }
+}
+
+/// 供 LineHeuristicParser 复用的日标题检测。
+private enum ListScheduleParserDay {
+    static func detect(_ text: String) -> Int? {
+        if let m = text.range(of: #"[一二三四五六日天]、?\s*星期[一二三四五六日天]"#, options: .regularExpression) {
+            return WeekdayName.detect(in: String(text[m]), allowBare: false)
+        }
+        if text.range(of: #"^[一二三四五六日天]、"#, options: .regularExpression) != nil {
+            return WeekdayName.detect(in: "星期" + String(text.prefix(1)), allowBare: false)
+        }
+        return nil
     }
 }
 

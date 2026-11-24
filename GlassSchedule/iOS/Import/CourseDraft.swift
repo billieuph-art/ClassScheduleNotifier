@@ -70,14 +70,16 @@ struct CourseDraft: Identifiable, Hashable {
     var isValid: Bool {
         let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard cleaned.count >= 2, endMinutes > startMinutes else { return false }
-        let junk = ["上午", "下午", "晚上", "备注", "课程", "教室", "教师", "时间", "节次", "地点", "节数", "今天"]
+        if ScheduleJunk.isDayOrHeader(cleaned) { return false }
+        let junk = ["上午", "下午", "晚上", "备注", "课程", "教室", "教师", "时间", "节次", "地点", "节数", "今天", "时间段", "课程名", "周次"]
         if junk.contains(cleaned) { return false }
         if cleaned.contains("@") { return false }
         if cleaned.hasPrefix("周") && cleaned.count <= 3 { return false }
         if cleaned.hasPrefix("星期") && cleaned.count <= 4 { return false }
-        // 纯教室号
+        // 纯教室号 / 纯时间
         if cleaned.range(of: #"^\d{3,5}$"#, options: .regularExpression) != nil { return false }
         if cleaned.range(of: #"^[一二三四五六日天]?@?\d{3,5}$"#, options: .regularExpression) != nil { return false }
+        if cleaned.range(of: #"^\d{1,2}[:：]\d{2}"#, options: .regularExpression) != nil { return false }
         return true
     }
 

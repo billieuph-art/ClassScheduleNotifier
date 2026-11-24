@@ -39,8 +39,11 @@ enum ScheduleImporter {
         let layout = TextExtractor.layoutDescription(document.items)
         let rowsText = Set(document.items.map(\.page)).sorted()
             .flatMap { page in LayoutRows.group(document.items.filter { $0.page == page }) }
-            // 行内无空格拼接，避免把「水利工 程造价」拆开
-            .map { OCRTextJoiner.join($0.map(\.text)) }
+            // 横排列表必须保留空格，否则「高等数学 张伟 理教楼」会粘成一团
+            .map { row in
+                if row.count >= 3 { return row.map(\.text).joined(separator: " ") }
+                return OCRTextJoiner.join(row.map(\.text))
+            }
             .joined(separator: "\n")
         let plain = [document.plainText, rowsText].filter { !$0.isEmpty }.joined(separator: "\n")
         let aiInput = [layout, document.items.isEmpty ? document.plainText : ""].filter { !$0.isEmpty }.joined(separator: "\n")
@@ -123,32 +126,53 @@ enum ScheduleImporter {
     }
 
     private static func ruleBasedDrafts(items: [TextItem], plain: String, slots: [PeriodSlot]) -> [CourseDraft] {
-        var drafts = GridHeuristicParser.parse(items, slots: slots)
-        let lineDrafts = LineHeuristicParser.parse(plain, slots: slots)
-        if drafts.isEmpty {
-            drafts = lineDrafts
-        } else if !lineDrafts.isEmpty {
-            drafts = merge(primary: drafts, secondary: lineDrafts, fillWeeks: true)
+        // 三种版式并行：列表横排、网格、时间轴；取质量最高者，必要时少量合并补全
+        let list = ListScheduleParser.parse(items, slots: slots)
+        let grid = GridHeuristicParser.parse(items, slots: slots)
+        let timeline = TimelineScheduleParser.parse(items, slots: slots)
+        let lines = LineHeuristicParser.parse(plain, slots: slots)
+
+        let candidates = [
+            ("list", list),
+            ("grid", grid),
+            ("timeline", timeline),
+            ("lines", lines),
+        ]
+        let ranked = candidates
+            .map { ($0.0, dedupe($0.1.filter { !$0.name.isEmpty && !ScheduleJunk.isDayOrHeader($0.name) }), quality($0.1)) }
+            .sorted { $0.2 > $1.2 }
+
+        guard let best = ranked.first, best.2 > 0, !best.1.isEmpty else {
+            return dedupe(list + grid + timeline + lines).filter { !ScheduleJunk.isDayOrHeader($0.name) }
         }
-        return drafts
+
+        var drafts = best.1
+        // 用第二名补教室/教师/周次，但不引入「星期几」伪课程
+        if let second = ranked.dropFirst().first, second.2 >= best.2 / 2, !second.1.isEmpty {
+            drafts = merge(primary: drafts, secondary: second.1, fillWeeks: true)
+        }
+        return drafts.filter { !ScheduleJunk.isDayOrHeader($0.name) }
     }
 
     /// 分数越高表示课名越完整、教室越像真的、节次与时间一致。
     private static func quality(_ drafts: [CourseDraft]) -> Int {
         drafts.reduce(0) { score, draft in
             var s = 0
+            if ScheduleJunk.isDayOrHeader(draft.name) { return score - 20 }
             if draft.name.count >= 4 { s += 3 }
             if draft.name.count >= 6 { s += 3 }
             if draft.name.count >= 8 { s += 2 }
             if !draft.classroom.isEmpty { s += 4 }
-            if draft.classroom.range(of: #"\d{2,5}"#, options: .regularExpression) != nil { s += 3 }
-            if !draft.teacher.isEmpty { s += 3 }
+            if draft.classroom.range(of: #"\d{2,5}|[A-Za-z]\-?\d{2,4}"#, options: .regularExpression) != nil { s += 4 }
+            if !draft.teacher.isEmpty { s += 4 }
             if !draft.weeks.isEmpty { s += 2 }
             if draft.name.contains("@") { s -= 8 }
             if draft.name.count <= 3 { s -= 5 }
-            // 残片课名（如「程造价」）大幅扣分
+            // 残片课名 / 教师粘连课名
             if draft.name.count <= 4 && draft.classroom.isEmpty { s -= 4 }
+            if draft.name.contains("楼") || draft.name.contains("馆") { s -= 6 }
             if draft.startPeriod >= 1, draft.endPeriod >= draft.startPeriod { s += 2 }
+            if draft.endMinutes > draft.startMinutes { s += 2 }
             if let mapped = PeriodTable.periods(startMinutes: draft.startMinutes, endMinutes: draft.endMinutes, in: SharedSettings.periodSlots),
                mapped.0 == draft.startPeriod, mapped.1 == draft.endPeriod {
                 s += 3

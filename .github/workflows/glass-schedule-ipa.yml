@@ -123,24 +123,25 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: glass-schedule-sideload-${{ github.run_number }}
-          name: Classio 侧载版 IPA ${{ github.run_number }}（v1.0.11）
+          name: Classio 侧载版 IPA ${{ github.run_number }}（v1.0.12）
           target_commitish: ${{ github.sha }}
           prerelease: true
           files: |
             GlassSchedule/GlassSchedule-sideload.ipa
             GlassSchedule/GlassSchedule-sideload-lite.ipa
           body: |
-            ## Classio 侧载专用包（v1.0.11）
+            ## Classio 侧载专用包（v1.0.12）
 
             ### 本版
-            - **课表识别**：教室「教一楼 302」完整识别；教师名不再混进课名
-            - **单双周**：截图里的「单周/双周」自动归类，也可手动整表改
-            - 设置页去掉冗余通知引导按钮与长提示
-            - 继续提供 **lite**（无扩展）与 **完整版**（灵动岛）
+            - **识别大修**：列表横排 / 网格竖排 / 时间轴三种版式分别解析
+            - 课名与教师不再粘连；过滤「星期一」等伪课程
+            - 教室支持「理教楼 A-201」「教 A-101」「机房 C-301」
+            - **深浅色图标**再次启用（随系统外观切换）
+            - 单双周自动识别 + 手动覆盖
 
             ### 安装
-            1. 先删旧 App，再装；需要 **iOS 26+**
-            2. 若完整版装不上，先装 `GlassSchedule-sideload-lite.ipa`
-            3. 完整版请保留 Widget 扩展，勿用 Live Container
+            1. 先删旧 App 再装；需要 **iOS 26+**
+            2. 装不上完整版时先试 lite
+            3. 完整版保留 Widget，勿用 Live Container
 
             Bundle ID：`com.billieuphart.glassschedule`
