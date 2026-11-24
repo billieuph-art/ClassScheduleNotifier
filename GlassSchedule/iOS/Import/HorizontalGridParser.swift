@@ -237,7 +237,7 @@ enum HorizontalGridParser {
                 if let split = peelTrailingTeacher(from: value) {
                     nameParts.append(split.name)
                     if teacher.isEmpty { teacher = split.teacher }
-                } else if OCRCleanup.looksLikePersonNameOnly(value) {
+                } else if OCRCleanup.looksLikePersonNameOnly(value) || value.count == 1 {
                     if teacher.isEmpty { teacher = value }
                 } else {
                     nameParts.append(value)
