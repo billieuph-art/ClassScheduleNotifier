@@ -98,13 +98,10 @@ struct ImportView: View {
                 .buttonStyle(.plain)
                 .disabled(isProcessing)
 
-                VStack(alignment: .leading, spacing: 6) {
-                    Label(intelligenceCaption, systemImage: AIScheduleExtractor.isAvailable ? "apple.intelligence" : "text.viewfinder")
-                    Text("单双周课表：先导入单周截图并选「所有单周」，再导入双周截图选「所有双周」，并关闭「替换现有课表」。")
-                }
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .padding(.top, 6)
+                Label(intelligenceCaption, systemImage: AIScheduleExtractor.isAvailable ? "apple.intelligence" : "text.viewfinder")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 6)
             }
             .padding()
         }
@@ -173,16 +170,21 @@ struct ImportView: View {
                 }
                 TextField("专业（资料归档文件夹）", text: $major)
 
-                Picker("这些课属于", selection: $weekScope) {
+                Picker("周次归属", selection: $weekScope) {
                     ForEach(ImportWeekScope.allCases) { scope in
                         Text(scope.title(detectedWeek: outcome?.detectedTeachingWeek)).tag(scope)
                     }
                 }
                 .onChange(of: weekScope) { _, newValue in
-                    ScheduleImporter.applyWeekScope(newValue,
-                                                    detectedWeek: outcome?.detectedTeachingWeek,
-                                                    to: &drafts,
-                                                    overwriteExplicit: true)
+                    // 自动识别：不覆盖格子结果；手动选项：整表统一改写
+                    if let original = outcome?.drafts, newValue == .autoDetected {
+                        drafts = original.sorted { ($0.weekday, $0.startPeriod) < ($1.weekday, $1.startPeriod) }
+                    } else {
+                        ScheduleImporter.applyWeekScope(newValue,
+                                                        detectedWeek: outcome?.detectedTeachingWeek,
+                                                        to: &drafts,
+                                                        overwriteExplicit: true)
+                    }
                 }
 
                 Toggle("替换现有课表（\(existing.count) 门）", isOn: $replaceExisting)
@@ -222,17 +224,19 @@ struct ImportView: View {
     private var weekScopeFooter: String {
         let week = outcome?.detectedTeachingWeek
         switch weekScope {
+        case .autoDetected:
+            return "默认保留截图里每门课自己的周次（含「单周」「双周」）。若识别有误，可改选手动选项整表覆盖，或点「修改」逐门调整。"
         case .screenshotWeek:
             if let week {
-                return "只会写入第 \(week) 周，不会当成全学期每周都上。单双周不同时，请再导入另一周截图并选「所有单周/双周」，且关闭「替换」。"
+                return "所有课只会写入第 \(week) 周。"
             }
-            return "未识别到截图周次时，请改选单周、双周或每周。"
+            return "未识别到截图周次时，请改选自动识别、单周、双周或每周。"
         case .oddWeeks:
-            return "适用于单周课表。保存时建议关闭「替换」，再导入双周截图合并。"
+            return "把当前列表里全部课程改成单周（1、3、5…）。"
         case .evenWeeks:
-            return "适用于双周课表。保存时建议关闭「替换」，与已有单周课合并。"
+            return "把当前列表里全部课程改成双周（2、4、6…）。"
         case .everyWeek:
-            return "周次留空表示每周都上。若截图只是某一周，请改选「仅第 N 周」或单/双周。"
+            return "周次留空表示每周都上。"
         }
     }
 
@@ -250,9 +254,10 @@ struct ImportView: View {
                 } else {
                     drafts = result.drafts.sorted { ($0.weekday, $0.startPeriod) < ($1.weekday, $1.startPeriod) }
                     outcome = result
-                    weekScope = ImportWeekScope.defaultScope(detectedWeek: result.detectedTeachingWeek)
-                    // 单周截图默认合并进现有课表，方便再导双周
-                    replaceExisting = result.detectedTeachingWeek == nil && existing.isEmpty
+                    weekScope = ImportWeekScope.defaultScope(detectedWeek: result.detectedTeachingWeek,
+                                                             hasPerCourseWeeks: result.drafts.contains { !$0.weeks.isEmpty })
+                    // 已有课表时默认合并，避免冲掉另一半单/双周
+                    replaceExisting = existing.isEmpty
                 }
             } catch {
                 errorMessage = error.localizedDescription
@@ -320,7 +325,8 @@ private struct DraftRow: View {
                 .buttonStyle(.plain)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(draft.name).font(.headline)
-                    Text("\(draft.periodText) · \(draft.timeText) · \(draft.classroom.isEmpty ? "教室未知" : draft.classroom)")
+                    Text("\(draft.periodText) · \(draft.timeText) · \(draft.classroom.isEmpty ? "教室未知" : draft.classroom)"
+                         + (draft.teacher.isEmpty ? "" : " · \(draft.teacher)"))
                         .font(.caption).foregroundStyle(.secondary)
                     Text(WeeksParser.format(draft.weeks)).font(.caption2).foregroundStyle(.tertiary)
                 }

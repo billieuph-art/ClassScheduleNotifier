@@ -48,21 +48,31 @@ private enum Patterns {
     static let timeRange = try! NSRegularExpression(
         pattern: "(\\d{1,2}[:：]\\d{2})\\s*[-－—~～至到]\\s*(\\d{1,2}[:：]\\d{2})"
     )
+    /// 周次：包含「1-16周 (单周)」「1-16周（双周）」整段，避免只吃掉「1-16周」丢掉单双周标记
     static let weeks = try! NSRegularExpression(
-        pattern: "(?:第)?\\s*\\d{1,2}(?:\\s*[-－—~～至到]\\s*\\d{1,2})?(?:\\s*[,，、]\\s*\\d{1,2}(?:\\s*[-－—~～至到]\\s*\\d{1,2})?)*\\s*周|(?:[\\[(（]\\s*)?(?:第)?\\s*\\d{1,2}(?:\\s*[-－—~～至到]\\s*\\d{1,2})?(?:\\s*[,，、]\\s*\\d{1,2}(?:\\s*[-－—~～至到]\\s*\\d{1,2})?)*\\s*[\\])）]|(?:单|双)\\s*周"
+        pattern: "(?:第)?\\s*\\d{1,2}(?:\\s*[-－—~～至到]\\s*\\d{1,2})?(?:\\s*[,，、]\\s*\\d{1,2}(?:\\s*[-－—~～至到]\\s*\\d{1,2})?)*\\s*周\\s*(?:[\\(（]\\s*(?:单|双)\\s*周?\\s*[\\)）])?|(?:[\\[(（]\\s*)?(?:第)?\\s*\\d{1,2}(?:\\s*[-－—~～至到]\\s*\\d{1,2})?(?:\\s*[,，、]\\s*\\d{1,2}(?:\\s*[-－—~～至到]\\s*\\d{1,2})?)*\\s*[\\])）]\\s*(?:[\\(（]\\s*(?:单|双)\\s*周?\\s*[\\)）])?|(?:单|双)\\s*周"
     )
+    /// 教室：允许「教一楼 302」「教一楼302」「体育馆」
     static let room = try! NSRegularExpression(
-        pattern: "(?:[东南西北]?[\\p{Han}A-Za-z0-9]{0,8}?(?:楼|馆|教|室|区|院|中心|实验|机房|报告厅|阶梯)[\\p{Han}A-Za-z0-9\\-－—]*\\d+[A-Za-z0-9\\-－—]*)|(?:\\b[A-Za-z]{1,3}\\d?[-－—]?\\d{2,4}[A-Za-z]?\\b)|(?:\\b\\d{1,2}[-－—]\\d{3,4}\\b)|(?:教室[:：]?\\s*[\\p{Han}A-Za-z0-9\\-－—]+)"
+        pattern: "(?:[东南西北]?[\\p{Han}A-Za-z0-9]{0,10}?(?:楼|馆|教|室|区|院|中心|实验|机房|报告厅|阶梯)[\\p{Han}A-Za-z0-9\\-－—]*\\s*\\d{2,5}[A-Za-z0-9\\-－—]*)|(?:体育馆|操场|田径场|游泳馆)|(?:\\b[A-Za-z]{1,3}\\d?[-－—]?\\d{2,4}[A-Za-z]?\\b)|(?:\\b\\d{1,2}[-－—]\\d{3,4}\\b)|(?:教室[:：]?\\s*[\\p{Han}A-Za-z0-9\\-－—\\s]+\\d{2,5})"
     )
+    static let buildingOnly = try! NSRegularExpression(
+        pattern: "^[东南西北]?[\\p{Han}A-Za-z0-9]{0,10}?(?:楼|馆|教|室|区|院|中心)[\\p{Han}A-Za-z0-9\\-－—]*$"
+    )
+    static let buildingToken = try! NSRegularExpression(
+        pattern: "[东南西北]?[\\p{Han}A-Za-z0-9]{0,10}?(?:楼|馆|教|室|区|院|中心)[\\p{Han}A-Za-z0-9\\-－—]*"
+    )
+    static let roomNumber = try! NSRegularExpression(pattern: "^\\d{2,5}[A-Za-z]?$")
+    static let roomNumberToken = try! NSRegularExpression(pattern: "\\d{2,5}[A-Za-z]?")
     static let rowLabel = try! NSRegularExpression(
         pattern: "^\\s*(?:第\\s*)?(\\d{1,2})\\s*(?:[-－—~～]\\s*(\\d{1,2}))?\\s*节?\\s*$"
     )
     static let teacher = try! NSRegularExpression(
         pattern: "(?:教师|老师|授课)[:：]?\\s*([\\p{Han}]{2,8})|(?:[\\[【（(])\\s*([\\p{Han}]{2,4})(?:老师|教授)?\\s*[\\]】）)]"
     )
-    static let teacherLoose = try! NSRegularExpression(pattern: "^[\\p{Han}]{2,3}(?:老师|教授)?$")
+    static let teacherLoose = try! NSRegularExpression(pattern: "^(?:[\\p{Han}]{2,4}|辅导员)(?:老师|教授)?$")
     static let junkName = try! NSRegularExpression(
-        pattern: "^(?:星期?[一二三四五六日天]|周[一二三四五六日天]|今天|明天|第?\\d+节|上午|下午|晚上|备注|课程|教室|教师|时间|节次|地点|节数)$"
+        pattern: "^(?:星期?[一二三四五六日天]|周[一二三四五六日天]|今天|明天|第?\\d+节|上午|下午|晚上|备注|课程|教室|教师|时间|节次|地点|节数|—|-|－)$"
     )
     static let dateHeader = try! NSRegularExpression(pattern: "(\\d{1,2})[/.-](\\d{1,2})")
 
@@ -85,44 +95,132 @@ private struct CellFields {
     var periods: (Int, Int)?
     var times: (Int, Int)?
 
+    init() {}
+
     init(lines: [String]) {
-        // 先拼回整句，再解析 —— 专治窄列竖排 OCR。
-        var text = OCRTextJoiner.join(lines)
+        let cleanedLines = lines
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && $0 != "—" && $0 != "-" && $0 != "－" }
+        guard !cleanedLines.isEmpty else { return }
+
+        // 教务网格常见 4 行：课名 / 教师 / 教一楼 302 / 1-16周 (单周)
+        if parseStructuredLines(cleanedLines) { return }
+
+        // 回退：拼回整句再解析（超星窄列竖排）
+        parseJoined(OCRTextJoiner.join(cleanedLines))
+    }
+
+    /// 按行分类解析；成功取出课名则返回 true。
+    @discardableResult
+    private mutating func parseStructuredLines(_ lines: [String]) -> Bool {
+        var remain = lines
+        var weekLines: [String] = []
+        var roomLines: [String] = []
+        var teacherLines: [String] = []
+        var nameLines: [String] = []
+
+        // 先抽出周次行 / 教室行 / 教师行，剩下的拼成课名
+        for line in remain {
+            if isWeekLine(line) {
+                weekLines.append(line)
+            } else if isRoomLine(line) {
+                roomLines.append(line)
+            } else if isTeacherLine(line) {
+                teacherLines.append(line)
+            } else {
+                nameLines.append(line)
+            }
+        }
+
+        // 「教一楼」+「302」被拆成两行时合并
+        if roomLines.isEmpty {
+            for i in 0..<(remain.count - 1) {
+                if Patterns.firstMatch(Patterns.buildingOnly, in: remain[i]) != nil,
+                   Patterns.firstMatch(Patterns.roomNumber, in: remain[i + 1]) != nil {
+                    roomLines = ["\(remain[i]) \(remain[i + 1])"]
+                    nameLines.removeAll { $0 == remain[i] || $0 == remain[i + 1] }
+                    teacherLines.removeAll { $0 == remain[i] || $0 == remain[i + 1] }
+                    break
+                }
+            }
+        }
+
+        if let weekText = weekLines.first {
+            applyWeeks(from: weekText)
+        }
+        if let roomText = roomLines.first {
+            classroom = normalizeRoom(roomText)
+        }
+        if let teacherText = teacherLines.first {
+            teacher = teacherText.replacingOccurrences(of: "老师|教授", with: "", options: .regularExpression)
+        }
+
+        // 课名：优先非教师/非教室行；若分类过狠导致为空，用最长一行
+        name = nameLines
+            .filter { Patterns.firstMatch(Patterns.junkName, in: $0) == nil }
+            .joined()
+        if name.count < 2 {
+            name = lines.max(by: { $0.count < $1.count }) ?? ""
+        }
+        name = name.replacingOccurrences(of: #"^[\[【\(（]+|[\]】\)）]+$"#, with: "", options: .regularExpression)
+
+        // 仍缺字段时，对剩余拼接文本补抽
+        if classroom.isEmpty || teacher.isEmpty || weeks.isEmpty || name.count < 2 {
+            var leftover = lines.filter { line in
+                line != classroom && line != teacher && !weekLines.contains(line) && !roomLines.contains(line)
+            }
+            if name.count >= 2 { leftover.removeAll { $0 == name || name.contains($0) } }
+            let joined = OCRTextJoiner.join(leftover.isEmpty ? lines : leftover)
+            if classroom.isEmpty || teacher.isEmpty || weeks.isEmpty {
+                var tmp = CellFields()
+                tmp.parseJoined(joined)
+                if classroom.isEmpty { classroom = tmp.classroom }
+                if teacher.isEmpty { teacher = tmp.teacher }
+                if weeks.isEmpty { weeks = tmp.weeks }
+                if periods == nil { periods = tmp.periods }
+                if times == nil { times = tmp.times }
+                if name.count < 2 { name = tmp.name }
+            }
+        }
+
+        return name.count >= 2
+    }
+
+    private mutating func parseJoined(_ raw: String) {
+        var text = raw
         if text.isEmpty { return }
 
         if let m = Patterns.firstMatch(Patterns.timeRange, in: text),
            let s = Patterns.string(m, group: 1, in: text).flatMap({ TimeFormat.minutes(from: $0) }),
            let e = Patterns.string(m, group: 2, in: text).flatMap({ TimeFormat.minutes(from: $0) }) {
             times = (s, e)
-            text = (text as NSString).replacingCharacters(in: m.range, with: "")
+            text = (text as NSString).replacingCharacters(in: m.range, with: " ")
         }
-        if let m = Patterns.firstMatch(Patterns.weeks, in: text) {
+
+        // 可能先后出现「1-16周」与「单周」；合并后再解析
+        var weekSnippets: [String] = []
+        while let m = Patterns.firstMatch(Patterns.weeks, in: text) {
             let snippet = Patterns.string(m, group: 0, in: text) ?? ""
-            // 顶栏「第13周」不是单门课周次；只有区间/单双周才写入
-            let isBareTeachingWeek = snippet.range(of: #"^第?\s*\d{1,2}\s*周$"#, options: .regularExpression) != nil
-                && !snippet.contains("单") && !snippet.contains("双")
-            if !isBareTeachingWeek {
-                let parsed = WeeksParser.parse(snippet)
-                if !parsed.isEmpty { weeks = parsed }
-                else if snippet.contains("单") { weeks = stride(from: 1, through: 20, by: 2).map { $0 } }
-                else if snippet.contains("双") { weeks = stride(from: 2, through: 20, by: 2).map { $0 } }
-            }
-            text = (text as NSString).replacingCharacters(in: m.range, with: "")
+            weekSnippets.append(snippet)
+            text = (text as NSString).replacingCharacters(in: m.range, with: " ")
         }
+        if !weekSnippets.isEmpty {
+            applyWeeks(from: weekSnippets.joined(separator: " "))
+        }
+
         if let m = Patterns.firstMatch(Patterns.periodRange, in: text),
            let s = Patterns.string(m, group: 1, in: text).flatMap({ Int($0) }) {
             let e = Patterns.string(m, group: 2, in: text).flatMap { Int($0) } ?? s
             periods = (s, max(s, e))
-            text = (text as NSString).replacingCharacters(in: m.range, with: "")
+            text = (text as NSString).replacingCharacters(in: m.range, with: " ")
         }
         if let m = Patterns.firstMatch(Patterns.teacher, in: text) {
             teacher = Patterns.string(m, group: 1, in: text) ?? Patterns.string(m, group: 2, in: text) ?? ""
-            text = (text as NSString).replacingCharacters(in: m.range, with: "")
+            text = (text as NSString).replacingCharacters(in: m.range, with: " ")
         }
 
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // 优先解析 课程名@教室
         if let m = Patterns.firstMatch(Patterns.atRoom, in: text),
            let course = Patterns.string(m, group: 1, in: text),
            let room = Patterns.string(m, group: 2, in: text) {
@@ -130,29 +228,48 @@ private struct CellFields {
             classroom = room
         } else {
             if let m = Patterns.firstMatch(Patterns.room, in: text) {
-                classroom = (Patterns.string(m, group: 0, in: text) ?? "")
-                    .replacingOccurrences(of: "教室[:：]?", with: "", options: .regularExpression)
+                classroom = normalizeRoom(Patterns.string(m, group: 0, in: text) ?? "")
                 text = (text as NSString).replacingCharacters(in: m.range, with: " ")
             }
+            // 「教一楼302」粘连时上面已覆盖；「教一楼」与数字被空格拆开再拼
+            if classroom.isEmpty, let m = Patterns.firstMatch(Patterns.buildingToken, in: text) {
+                let building = Patterns.string(m, group: 0, in: text) ?? ""
+                let rest = (text as NSString).replacingCharacters(in: m.range, with: " ")
+                if let numMatch = Patterns.firstMatch(Patterns.roomNumberToken, in: rest),
+                   let num = Patterns.string(numMatch, group: 0, in: rest) {
+                    classroom = "\(building) \(num)"
+                    text = (rest as NSString).replacingCharacters(in: numMatch.range, with: " ")
+                }
+            }
+
             var tokens = text.split(whereSeparator: { $0.isWhitespace || $0 == "|" || $0 == "/" || $0 == "·" })
                 .map { $0.trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters)) }
                 .filter { !$0.isEmpty }
             tokens.removeAll { Patterns.firstMatch(Patterns.junkName, in: $0) != nil || Int($0) != nil }
+
             if teacher.isEmpty {
-                for (index, candidate) in tokens.enumerated() where Patterns.firstMatch(Patterns.teacherLoose, in: candidate) != nil {
-                    // 不要把课名片段当教师；课名通常更长。
-                    if candidate.count <= 3 {
+                // 从后往前找教师名，避免把课名开头两字当成老师
+                for index in tokens.indices.reversed() where Patterns.firstMatch(Patterns.teacherLoose, in: tokens[index]) != nil {
+                    let candidate = tokens[index]
+                    if candidate.count <= 4 {
                         teacher = candidate.replacingOccurrences(of: "老师|教授", with: "", options: .regularExpression)
                         tokens.remove(at: index)
+                        break
                     }
-                    break
+                }
+            }
+            // 粘连串：…李明教一楼… 里抽出 2–3 字人名
+            if teacher.isEmpty {
+                let compact = tokens.joined()
+                if let extracted = extractTrailingTeacher(from: compact) {
+                    teacher = extracted.teacher
+                    tokens = [extracted.remainder].filter { !$0.isEmpty }
                 }
             }
             name = tokens.joined()
         }
 
         name = name.replacingOccurrences(of: #"^[\[【\(（]+|[\]】\)）]+$"#, with: "", options: .regularExpression)
-        // 教室号不要当课名
         if name.contains("@") || name.hasPrefix("二@") || (name.first?.isNumber == true && name.contains("@")) {
             if classroom.isEmpty, let m = Patterns.firstMatch(Patterns.atRoom, in: name),
                let course = Patterns.string(m, group: 1, in: name),
@@ -161,6 +278,74 @@ private struct CellFields {
                 classroom = room
             }
         }
+        // 课名里误吞的教师名
+        if teacher.isEmpty, let extracted = extractTrailingTeacher(from: name), extracted.remainder.count >= 2 {
+            name = extracted.remainder
+            teacher = extracted.teacher
+        }
+    }
+
+    private mutating func applyWeeks(from snippet: String) {
+        let isBareTeachingWeek = snippet.range(of: #"^第?\s*\d{1,2}\s*周$"#, options: .regularExpression) != nil
+            && !snippet.contains("单") && !snippet.contains("双")
+        guard !isBareTeachingWeek else { return }
+        let parsed = WeeksParser.parse(snippet)
+        if !parsed.isEmpty {
+            weeks = parsed
+        } else if snippet.contains("单") {
+            weeks = Array(stride(from: 1, through: 20, by: 2))
+        } else if snippet.contains("双") {
+            weeks = Array(stride(from: 2, through: 20, by: 2))
+        }
+    }
+
+    private func isWeekLine(_ line: String) -> Bool {
+        line.contains("周") && (
+            line.contains("单") || line.contains("双")
+            || Patterns.firstMatch(Patterns.weeks, in: line) != nil
+            || line.range(of: #"\d"#, options: .regularExpression) != nil
+        )
+    }
+
+    private func isRoomLine(_ line: String) -> Bool {
+        if Patterns.firstMatch(Patterns.room, in: line) != nil { return true }
+        if line == "体育馆" || line == "操场" { return true }
+        // 「教一楼 302」
+        let parts = line.split(whereSeparator: \.isWhitespace).map(String.init)
+        if parts.count == 2,
+           Patterns.firstMatch(Patterns.buildingOnly, in: parts[0]) != nil,
+           Patterns.firstMatch(Patterns.roomNumber, in: parts[1]) != nil {
+            return true
+        }
+        return false
+    }
+
+    private func isTeacherLine(_ line: String) -> Bool {
+        Patterns.firstMatch(Patterns.teacherLoose, in: line) != nil
+            || Patterns.firstMatch(Patterns.teacher, in: line) != nil
+    }
+
+    private func normalizeRoom(_ raw: String) -> String {
+        raw.replacingOccurrences(of: "教室[:：]?", with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 从「高等数学(上)李明」这类粘连串末尾抽出教师名。
+    private func extractTrailingTeacher(from text: String) -> (remainder: String, teacher: String)? {
+        let chars = Array(text)
+        guard chars.count >= 4 else { return nil }
+        for len in [3, 2] {
+            guard chars.count > len else { continue }
+            let suffix = String(chars.suffix(len))
+            let prefix = String(chars.dropLast(len))
+            guard Patterns.firstMatch(Patterns.teacherLoose, in: suffix) != nil else { continue }
+            guard prefix.count >= 2 else { continue }
+            // 前缀应像课名（含汉字且不只是姓）
+            let han = prefix.filter { $0.unicodeScalars.first.map { (0x4E00...0x9FFF).contains($0.value) } == true }
+            if han.count >= 2 { return (prefix, suffix) }
+        }
+        return nil
     }
 }
 

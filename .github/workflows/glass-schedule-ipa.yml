@@ -123,29 +123,24 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: glass-schedule-sideload-${{ github.run_number }}
-          name: Classio 侧载版 IPA ${{ github.run_number }}（v1.0.10）
+          name: Classio 侧载版 IPA ${{ github.run_number }}（v1.0.11）
           target_commitish: ${{ github.sha }}
           prerelease: true
           files: |
             GlassSchedule/GlassSchedule-sideload.ipa
             GlassSchedule/GlassSchedule-sideload-lite.ipa
           body: |
-            ## Classio 侧载专用包（v1.0.10）— 针对「无法安装」修复
+            ## Classio 侧载专用包（v1.0.11）
 
-            ### 请先试这两个包
-            1. **`GlassSchedule-sideload-lite.ipa`（推荐先装）** — **无小组件扩展**，最容易装上
-            2. **`GlassSchedule-sideload.ipa`** — 完整版（含灵动岛 / 实时活动）
+            ### 本版
+            - **课表识别**：教室「教一楼 302」完整识别；教师名不再混进课名
+            - **单双周**：截图里的「单周/双周」自动归类，也可手动整表改
+            - 设置页去掉冗余通知引导按钮与长提示
+            - 继续提供 **lite**（无扩展）与 **完整版**（灵动岛）
 
-            ### 本版修复
-            - 恢复与可安装的 v1.0.7 相同的 **ad-hoc 签名**（1.0.9 去签名导致部分工具无法重签）
-            - 去掉 `UIBackgroundModes: processing`（免费证书常见安装失败点）
-            - 图标改回单资源（避免超大 Assets.car）
-            - 需要 **iOS 26+**
-
-            ### 安装步骤
-            1. **先删除**手机上旧的 Classio / 玻璃课表
-            2. Sideloadly / 爱思：先装 **lite**；能打开后再装完整版
-            3. 装完整版时：**不要删 .appex**，关掉 Live Container
-            4. 设置最底部 → Classio → 通知 → 允许
+            ### 安装
+            1. 先删旧 App，再装；需要 **iOS 26+**
+            2. 若完整版装不上，先装 `GlassSchedule-sideload-lite.ipa`
+            3. 完整版请保留 Widget 扩展，勿用 Live Container
 
             Bundle ID：`com.billieuphart.glassschedule`

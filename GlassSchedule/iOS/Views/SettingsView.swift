@@ -38,12 +38,6 @@ struct SettingsView: View {
                 Section {
                     Stepper("上课前 \(reminderMinutes) 分钟提醒", value: $reminderMinutes, in: 5...120, step: 5)
                     LabeledContent("通知权限", value: notificationStatus)
-                    Button("开启 / 重新检查通知权限") {
-                        Task { await handleNotificationPermission() }
-                    }
-                    Button("打开本 App 设置页") {
-                        NotificationScheduler.shared.openAppSettings()
-                    }
                     Button("打开通知设置") {
                         NotificationScheduler.shared.openNotificationSettings()
                     }
@@ -64,8 +58,6 @@ struct SettingsView: View {
                     }
                 } header: {
                     Text("提醒与实时活动")
-                } footer: {
-                    Text("侧载常见：系统不弹授权框，且「设置 › 通知」列表里暂时找不到本 App。请先点「开启 / 重新检查」，再点「打开本 App 设置页」——在设置主页滑到最底部找到「Classio」，打开里面的「通知」。Sideloadly 安装时不要用 Live Container，并保留 Widget 扩展。")
                 }
 
                 Section {

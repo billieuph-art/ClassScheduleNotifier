@@ -98,16 +98,23 @@ enum ScheduleImporter {
             engine = .appleIntelligence
         }
 
-        // 截图是「某一周」的课表时，默认只挂到该周，绝不当成全学期每周都上
+        // 默认：有格子周次（含单双周）则保留；否则截图「第 N 周」只挂该周
         var scoped = drafts
-        applyWeekScope(.defaultScope(detectedWeek: detectedWeek), detectedWeek: detectedWeek, to: &scoped)
+        let scope = ImportWeekScope.defaultScope(detectedWeek: detectedWeek,
+                                                 hasPerCourseWeeks: drafts.contains { !$0.weeks.isEmpty })
+        applyWeekScope(scope, detectedWeek: detectedWeek, to: &scoped)
         return ImportOutcome(drafts: scoped, engine: engine, detectedTeachingWeek: detectedWeek)
     }
 
     /// 把周次范围写回草稿。
-    /// - overwriteExplicit: false 时保留格子里已写明的周次（如 1-8,10-16）；true 时按用户选择的单/双周覆盖。
+    /// - overwriteExplicit: false 时保留格子里已写明的周次（如 1-8,10-16 / 单周）；true 时按用户选择覆盖。
+    /// - autoDetected：始终不改已有周次；仅给完全空白的课填「每周」(空数组)。
     static func applyWeekScope(_ scope: ImportWeekScope, detectedWeek: Int?, to drafts: inout [CourseDraft],
                                overwriteExplicit: Bool = false) {
+        if scope == .autoDetected {
+            // 保留识别结果；空白周次保持空白（表示每周）
+            return
+        }
         let weeks = scope.weeks(detectedWeek: detectedWeek)
         for index in drafts.indices {
             if !overwriteExplicit, !drafts[index].weeks.isEmpty { continue }
@@ -134,7 +141,9 @@ enum ScheduleImporter {
             if draft.name.count >= 6 { s += 3 }
             if draft.name.count >= 8 { s += 2 }
             if !draft.classroom.isEmpty { s += 4 }
-            if draft.classroom.range(of: #"^\d{3,5}$"#, options: .regularExpression) != nil { s += 2 }
+            if draft.classroom.range(of: #"\d{2,5}"#, options: .regularExpression) != nil { s += 3 }
+            if !draft.teacher.isEmpty { s += 3 }
+            if !draft.weeks.isEmpty { s += 2 }
             if draft.name.contains("@") { s -= 8 }
             if draft.name.count <= 3 { s -= 5 }
             // 残片课名（如「程造价」）大幅扣分

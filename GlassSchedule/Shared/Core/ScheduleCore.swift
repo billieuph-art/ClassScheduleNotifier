@@ -229,8 +229,10 @@ enum TeachingWeekDetector {
     }
 }
 
-/// 截图导入时的上课周次范围（单双周课表可分两次导入）。
+/// 截图导入时的上课周次范围：可自动保留格子里的单双周，也可手动统一覆盖。
 enum ImportWeekScope: String, CaseIterable, Identifiable {
+    /// 保留每门课识别到的周次（含单周/双周），不整表覆盖
+    case autoDetected
     case screenshotWeek
     case oddWeeks
     case evenWeeks
@@ -240,18 +242,21 @@ enum ImportWeekScope: String, CaseIterable, Identifiable {
 
     func title(detectedWeek: Int?) -> String {
         switch self {
+        case .autoDetected: return "按识别结果（自动单双周）"
         case .screenshotWeek:
             if let w = detectedWeek { return "仅第 \(w) 周（截图所示）" }
             return "仅截图中的那一周"
-        case .oddWeeks: return "所有单周（1、3、5…）"
-        case .evenWeeks: return "所有双周（2、4、6…）"
-        case .everyWeek: return "每周都上"
+        case .oddWeeks: return "全部改为单周（1、3、5…）"
+        case .evenWeeks: return "全部改为双周（2、4、6…）"
+        case .everyWeek: return "全部改为每周都上"
         }
     }
 
     func weeks(detectedWeek: Int?, through maxWeek: Int = 20) -> [Int] {
         let maxWeek = max(1, min(maxWeek, 30))
         switch self {
+        case .autoDetected:
+            return [] // 不覆盖，由 applyWeekScope 跳过
         case .screenshotWeek:
             if let w = detectedWeek, (1...maxWeek).contains(w) { return [w] }
             return []
@@ -264,9 +269,10 @@ enum ImportWeekScope: String, CaseIterable, Identifiable {
         }
     }
 
-    /// 截图标了第 N 周时，默认「仅该周」，避免把单周课表当成全学期。
-    static func defaultScope(detectedWeek: Int?) -> ImportWeekScope {
-        detectedWeek == nil ? .everyWeek : .screenshotWeek
+    /// 格子里已识别出周次/单双周时，默认保留自动结果；否则若截图有「第 N 周」则只写该周。
+    static func defaultScope(detectedWeek: Int?, hasPerCourseWeeks: Bool = false) -> ImportWeekScope {
+        if hasPerCourseWeeks { return .autoDetected }
+        return detectedWeek == nil ? .everyWeek : .screenshotWeek
     }
 }
 
