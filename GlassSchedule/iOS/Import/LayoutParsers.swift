@@ -471,6 +471,12 @@ enum ScheduleJunk {
         let weekOnly = t.replacingOccurrences(of: #"[（()）\s]"#, with: "", options: .regularExpression)
         if weekOnly == "每周" || weekOnly.range(of: #"^(每周)+$"#, options: .regularExpression) != nil { return true }
         if t.range(of: #"^[\(（]*每周[\)）]*([\(（]*每周[\)）]*)+$"#, options: .regularExpression) != nil { return true }
+        // 周次/教室纯文本（避免与 OCRCleanup 互相递归，这里用轻量规则）
+        if t.range(of: #"^(?:[\(（]?\s*每周\s*[\)）]?)+$"#, options: .regularExpression) != nil { return true }
+        if t.range(of: #"^(?:(?:第)?\d{1,2}(?:\s*[-－—~～至到]\s*\d{1,2})?\s*周(?:\s*[\(（]\s*(?:单|双)\s*周?\s*[\)）])?)+$"#, options: .regularExpression) != nil {
+            return true
+        }
+        if t.range(of: #"^第?\s*\d{1,2}\s*([-－—~～]\s*\d{1,2})?\s*节"#, options: .regularExpression) != nil { return true }
 
         if isColumnHeaderBlob(t) { return true }
 

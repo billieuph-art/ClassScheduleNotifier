@@ -24,7 +24,7 @@ struct CourseDraft: Identifiable, Hashable {
 
     /// - Parameter preferPeriods: 网格课表以节次为准重算时间；列表/ICS 以时间反推节次。
     mutating func complete(with slots: [PeriodSlot], preferPeriods: Bool = true) {
-        name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        name = OCRCleanup.sanitizeCourseName(name)
         classroom = classroom.trimmingCharacters(in: .whitespacesAndNewlines)
         teacher = teacher.trimmingCharacters(in: .whitespacesAndNewlines)
         // 再处理一次 name@room（AI / 碎片拼接后的残留）
@@ -68,9 +68,9 @@ struct CourseDraft: Identifiable, Hashable {
     }
 
     var isValid: Bool {
-        let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleaned = OCRCleanup.sanitizeCourseName(name)
         guard cleaned.count >= 2, endMinutes > startMinutes else { return false }
-        if ScheduleJunk.isNonCourseText(cleaned) { return false }
+        if OCRCleanup.isBogusCourseName(cleaned) { return false }
         let junk = ["上午", "下午", "晚上", "备注", "课程", "教室", "教师", "时间", "节次", "地点", "节数", "今天", "时间段", "课程名", "周次", "每周"]
         if junk.contains(cleaned) { return false }
         if cleaned.contains("@") { return false }
@@ -81,6 +81,11 @@ struct CourseDraft: Identifiable, Hashable {
         if cleaned.range(of: #"^[一二三四五六日天]?@?\d{3,5}$"#, options: .regularExpression) != nil { return false }
         if cleaned.range(of: #"^\d{1,2}[:：]\d{2}"#, options: .regularExpression) != nil { return false }
         return true
+    }
+
+    /// 确认页提示：课名可疑（拼接/伪课程），需人工核对。
+    var needsReview: Bool {
+        OCRCleanup.looksLikeMergedCourses(name) || OCRCleanup.isBogusCourseName(name)
     }
 
     func makeCourse(major: String) -> Course {

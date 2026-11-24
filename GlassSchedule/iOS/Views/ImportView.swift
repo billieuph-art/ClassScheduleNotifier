@@ -192,6 +192,18 @@ struct ImportView: View {
                 Text(weekScopeFooter)
             }
 
+            if !reviewHints.isEmpty {
+                Section {
+                    ForEach(reviewHints, id: \.self) { hint in
+                        Label(hint, systemImage: "exclamationmark.triangle.fill")
+                            .font(.footnote)
+                            .foregroundStyle(.orange)
+                    }
+                } header: {
+                    Text("请核对")
+                }
+            }
+
             ForEach(1...7, id: \.self) { day in
                 if drafts.contains(where: { $0.weekday == day }) {
                     Section(WeekdayName.full(day)) {
@@ -219,6 +231,32 @@ struct ImportView: View {
             }
         }
         .scrollContentBackground(.hidden)
+    }
+
+    private var reviewHints: [String] {
+        var hints: [String] = []
+        let included = drafts.filter(\.isIncluded)
+        let suspicious = included.filter {
+            OCRCleanup.looksLikeMergedCourses($0.name) || OCRCleanup.isBogusCourseName($0.name)
+        }
+        if !suspicious.isEmpty {
+            hints.append("有 \(suspicious.count) 门课名疑似识别拼接错误，请点「修改」检查或取消勾选。")
+        }
+        let missing = included.filter { $0.classroom.isEmpty || $0.teacher.isEmpty }.count
+        if missing > 0 {
+            hints.append("有 \(missing) 门课教室或教师为空，保存前建议补全。")
+        }
+        // 同学期同学段冲突仅提示，不自动删除（可能是单双周两套课）
+        var seen: [String: Int] = [:]
+        for d in included where d.startPeriod > 0 {
+            let key = "\(d.weekday)-\(d.startPeriod)-\(d.endPeriod)"
+            seen[key, default: 0] += 1
+        }
+        let conflicts = seen.values.filter { $0 > 1 }.count
+        if conflicts > 0 {
+            hints.append("有 \(conflicts) 个时段存在多门课，若非单双周两套请核对。")
+        }
+        return hints
     }
 
     private var weekScopeFooter: String {
@@ -324,7 +362,14 @@ private struct DraftRow: View {
                 }
                 .buttonStyle(.plain)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(draft.name).font(.headline)
+                    HStack(spacing: 6) {
+                        Text(draft.name).font(.headline)
+                        if draft.needsReview {
+                            Text("待确认")
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(.orange)
+                        }
+                    }
                     Text("\(draft.periodText) · \(draft.timeText) · \(draft.classroom.isEmpty ? "教室未知" : draft.classroom)"
                          + (draft.teacher.isEmpty ? "" : " · \(draft.teacher)"))
                         .font(.caption).foregroundStyle(.secondary)

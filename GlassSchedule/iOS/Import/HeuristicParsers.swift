@@ -99,16 +99,24 @@ private struct CellFields {
     init() {}
 
     init(lines: [String]) {
-        let cleanedLines = lines
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty && $0 != "—" && $0 != "-" && $0 != "－" }
+        let cleanedLines = OCRCleanup.dedupeLines(
+            lines
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty && $0 != "—" && $0 != "-" && $0 != "－" }
+        )
         guard !cleanedLines.isEmpty else { return }
 
         // 教务网格常见 4 行：课名 / 教师 / 教一楼 302 / 1-16周 (单周)
-        if parseStructuredLines(cleanedLines) { return }
+        if parseStructuredLines(cleanedLines) {
+            name = OCRCleanup.sanitizeCourseName(name)
+            if OCRCleanup.isBogusCourseName(name) { name = "" }
+            return
+        }
 
         // 回退：拼回整句再解析（超星窄列竖排）
         parseJoined(OCRTextJoiner.join(cleanedLines))
+        name = OCRCleanup.sanitizeCourseName(name)
+        if OCRCleanup.isBogusCourseName(name) { name = "" }
     }
 
     /// 按行分类解析；成功取出课名则返回 true。
@@ -167,7 +175,8 @@ private struct CellFields {
             name = fallback
         }
         name = name.replacingOccurrences(of: #"^[\[【\(（]+|[\]】\)）]+$"#, with: "", options: .regularExpression)
-        if ScheduleJunk.isNonCourseText(name) { name = "" }
+        name = OCRCleanup.sanitizeCourseName(name)
+        if ScheduleJunk.isNonCourseText(name) || OCRCleanup.isBogusCourseName(name) { name = "" }
 
         // 仍缺字段时，对剩余拼接文本补抽
         if classroom.isEmpty || teacher.isEmpty || weeks.isEmpty || name.count < 2 {
@@ -362,7 +371,8 @@ enum GridHeuristicParser {
     static func parse(_ allItems: [TextItem], slots: [PeriodSlot]) -> [CourseDraft] {
         var drafts: [CourseDraft] = []
         for page in Set(allItems.map(\.page)).sorted() {
-            drafts += parsePage(allItems.filter { $0.page == page }, slots: slots)
+            let cleaned = OCRCleanup.dedupeItems(allItems.filter { $0.page == page })
+            drafts += parsePage(cleaned, slots: slots)
         }
         return mergeAdjacent(drafts, slots: slots)
     }
@@ -374,42 +384,49 @@ enum GridHeuristicParser {
         guard columns.count >= 2 else { return [] }
         let headerBottom = columns.values.map(\.bottom).max() ?? 0.08
 
-        let centers = columns.values.map(\.x).sorted()
-        let spacing = zip(centers, centers.dropFirst()).map { $1 - $0 }.min() ?? 0.12
-        let leftBoundary = centers[0] - spacing * 0.55
+        let sortedCols = columns.map { (day: $0.key, x: $0.value.x) }.sorted { $0.x < $1.x }
+        let colBounds = columnBounds(sortedCols)
+        let leftBoundary = colBounds.map(\.value.lowerBound).min() ?? (sortedCols[0].x - 0.06)
 
-        var rowCenters = detectPeriodRows(in: items, leftBoundary: leftBoundary, headerBottom: headerBottom)
-        if rowCenters.count < 2 {
-            rowCenters = guessedPeriodRows(from: items, leftBoundary: leftBoundary, headerBottom: headerBottom, slots: slots)
+        var periodBands = detectPeriodBands(in: items, leftBoundary: leftBoundary, headerBottom: headerBottom)
+        if periodBands.count < 2 {
+            periodBands = guessedPeriodBands(from: items, leftBoundary: leftBoundary, headerBottom: headerBottom, slots: slots)
         }
-
-        let cells = items.filter { $0.rect.minY >= headerBottom - 0.004 && $0.rect.midX >= leftBoundary }
-        var byWeekday: [Int: [TextItem]] = [:]
-        for item in cells {
-            let weekday = columns.min { abs($0.value.x - item.rect.midX) < abs($1.value.x - item.rect.midX) }!.key
-            guard abs(columns[weekday]!.x - item.rect.midX) < spacing * 0.55 else { continue }
-            byWeekday[weekday, default: []].append(item)
-        }
+        guard !periodBands.isEmpty else { return [] }
 
         var drafts: [CourseDraft] = []
-        for (weekday, columnItems) in byWeekday {
-            let columnBlocks = blocks(from: columnItems)
-            for (blockIndex, block) in columnBlocks.enumerated() {
-                let nextTop = blockIndex + 1 < columnBlocks.count ? columnBlocks[blockIndex + 1].map(\.rect.minY).min() : nil
-                let fields = CellFields(lines: block.map(\.text))
-                guard fields.name.count >= 2, Patterns.firstMatch(Patterns.junkName, in: fields.name) == nil else { continue }
-                guard !ScheduleJunk.isNonCourseText(fields.name) else { continue }
-                // 拒绝把教室号当课名
-                guard !fields.name.contains("@"), !(fields.name.count <= 6 && fields.name.hasPrefix("二")) else { continue }
-                // 课名里不应主要是楼名（如「理教楼」）
-                if fields.name.hasSuffix("楼") || fields.name.hasSuffix("馆"), fields.name.count <= 5 { continue }
+        for (day, xRange) in colBounds {
+            for band in periodBands {
+                let cellItems = items.filter { item in
+                    guard item.rect.minY >= headerBottom - 0.01 else { return false }
+                    let x = item.rect.midX
+                    let y = item.rect.midY
+                    return xRange.contains(x) && band.yRange.contains(y)
+                }
+                guard !cellItems.isEmpty else { continue }
+
+                let lines = OCRCleanup.dedupeLines(cellItems.sorted { $0.rect.minY < $1.rect.minY }.map(\.text))
+                // 单元格内再丢掉左侧节次标签残留
+                let contentLines = lines.filter { line in
+                    Patterns.firstMatch(Patterns.rowLabel, in: line) == nil
+                        && line.range(of: #"^\d{1,2}[:：]\d{2}([-－—~～]\d{1,2}[:：]\d{2})?$"#, options: .regularExpression) == nil
+                }
+                guard !contentLines.isEmpty else { continue }
+
+                var fields = CellFields(lines: contentLines)
+                fields.name = OCRCleanup.sanitizeCourseName(fields.name)
+                guard fields.name.count >= 2 else { continue }
+                guard !OCRCleanup.isBogusCourseName(fields.name) else { continue }
+                guard Patterns.firstMatch(Patterns.junkName, in: fields.name) == nil else { continue }
+                guard !fields.name.contains("@") else { continue }
 
                 var draft = CourseDraft(name: fields.name, classroom: fields.classroom, teacher: fields.teacher,
-                                        weekday: weekday, weeks: fields.weeks)
+                                        weekday: day, weeks: fields.weeks)
                 if let p = fields.periods {
                     draft.startPeriod = p.0; draft.endPeriod = p.1
-                } else if let p = periods(for: block, rowCenters: rowCenters, nextTop: nextTop) {
-                    draft.startPeriod = p.0; draft.endPeriod = p.1
+                } else {
+                    draft.startPeriod = band.startPeriod
+                    draft.endPeriod = band.endPeriod
                 }
                 if let t = fields.times { draft.startMinutes = t.0; draft.endMinutes = t.1 }
                 draft.complete(with: slots, preferPeriods: true)
@@ -417,6 +434,82 @@ enum GridHeuristicParser {
             }
         }
         return drafts.sorted { ($0.weekday, $0.startPeriod) < ($1.weekday, $1.startPeriod) }
+    }
+
+    /// 相邻列中点为边界，禁止跨列吞字。
+    private static func columnBounds(_ sortedCols: [(day: Int, x: CGFloat)]) -> [Int: ClosedRange<CGFloat>] {
+        var result: [Int: ClosedRange<CGFloat>] = [:]
+        for (i, col) in sortedCols.enumerated() {
+            let left: CGFloat
+            let right: CGFloat
+            if i == 0 {
+                let gap = i + 1 < sortedCols.count ? (sortedCols[i + 1].x - col.x) : 0.12
+                left = col.x - gap * 0.48
+                right = i + 1 < sortedCols.count ? (col.x + sortedCols[i + 1].x) / 2 : col.x + gap * 0.48
+            } else if i == sortedCols.count - 1 {
+                let gap = col.x - sortedCols[i - 1].x
+                left = (sortedCols[i - 1].x + col.x) / 2
+                right = col.x + gap * 0.48
+            } else {
+                left = (sortedCols[i - 1].x + col.x) / 2
+                right = (col.x + sortedCols[i + 1].x) / 2
+            }
+            result[col.day] = left...right
+        }
+        return result
+    }
+
+    private struct PeriodBand {
+        var startPeriod: Int
+        var endPeriod: Int
+        var yRange: ClosedRange<CGFloat>
+    }
+
+    private static func detectPeriodBands(in items: [TextItem], leftBoundary: CGFloat, headerBottom: CGFloat) -> [PeriodBand] {
+        var labels: [(start: Int, end: Int, y: CGFloat)] = []
+        for item in items where item.rect.midX < leftBoundary && item.rect.minY > headerBottom - 0.02 {
+            let text = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let m = Patterns.firstMatch(Patterns.rowLabel, in: text),
+               let s = Patterns.string(m, group: 1, in: text).flatMap({ Int($0) }),
+               (1...20).contains(s) {
+                let e = Patterns.string(m, group: 2, in: text).flatMap { Int($0) } ?? (s % 2 == 1 ? s + 1 : s)
+                labels.append((s, max(s, e), item.rect.midY))
+            } else if let m = text.range(of: #"第\s*(\d{1,2})\s*[-－—~～]\s*(\d{1,2})\s*节"#, options: .regularExpression) {
+                let nums = String(text[m]).split { !"0123456789".contains($0) }.compactMap { Int($0) }
+                if nums.count >= 2 { labels.append((nums[0], nums[1], item.rect.midY)) }
+            }
+        }
+        // 去重同节次
+        var byStart: [Int: (Int, CGFloat)] = [:]
+        for lab in labels {
+            if byStart[lab.start] == nil { byStart[lab.start] = (lab.end, lab.y) }
+        }
+        let sorted = byStart.map { (start: $0.key, end: $0.value.0, y: $0.value.1) }.sorted { $0.y < $1.y }
+        guard sorted.count >= 2 else { return [] }
+
+        var bands: [PeriodBand] = []
+        for (i, lab) in sorted.enumerated() {
+            let top = i == 0 ? headerBottom : (sorted[i - 1].y + lab.y) / 2
+            let bottom = i + 1 < sorted.count ? (lab.y + sorted[i + 1].y) / 2 : min(1, lab.y + (lab.y - top))
+            bands.append(PeriodBand(startPeriod: lab.start, endPeriod: lab.end, yRange: top...bottom))
+        }
+        return bands
+    }
+
+    private static func guessedPeriodBands(from items: [TextItem], leftBoundary: CGFloat,
+                                           headerBottom: CGFloat, slots: [PeriodSlot]) -> [PeriodBand] {
+        let body = items.filter { $0.rect.minY > headerBottom && $0.rect.midX >= leftBoundary }
+        guard let top = body.map(\.rect.minY).min(), let bottom = body.map(\.rect.maxY).max(), bottom > top else {
+            return []
+        }
+        // 常见大节：1-2, 3-4, 5-6, 7-8, 9-10, 11-12
+        let pairs = [(1, 2), (3, 4), (5, 6), (7, 8), (9, 10), (11, 12)]
+        let count = pairs.count
+        return pairs.enumerated().map { index, pair in
+            let a = top + (bottom - top) * CGFloat(index) / CGFloat(count)
+            let b = top + (bottom - top) * CGFloat(index + 1) / CGFloat(count)
+            return PeriodBand(startPeriod: pair.0, endPeriod: pair.1, yRange: a...b)
+        }
     }
 
     private struct Column {
@@ -476,74 +569,6 @@ enum GridHeuristicParser {
         if currentMonth - month > 6 { year += 1 }
         guard let date = cal.date(from: DateComponents(year: year, month: month, day: day)) else { return nil }
         return SemesterCalendar.weekday(of: date)
-    }
-
-    private static func detectPeriodRows(in items: [TextItem], leftBoundary: CGFloat, headerBottom: CGFloat) -> [Int: CGFloat] {
-        var rowCenters: [Int: CGFloat] = [:]
-        for item in items where item.rect.midX < leftBoundary && item.rect.minY > headerBottom - 0.02 {
-            let text = item.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if let m = Patterns.firstMatch(Patterns.rowLabel, in: text),
-               let period = Patterns.string(m, group: 1, in: text).flatMap({ Int($0) }),
-               (1...20).contains(period), rowCenters[period] == nil {
-                rowCenters[period] = item.rect.midY
-            }
-        }
-        return rowCenters
-    }
-
-    private static func blocks(from items: [TextItem]) -> [[TextItem]] {
-        let sorted = items.sorted { $0.rect.minY < $1.rect.minY }
-        let heights = sorted.map(\.rect.height).sorted()
-        let lineHeight = heights.dropFirst(heights.count / 3).first ?? 0.02
-        var result: [[TextItem]] = []
-        for item in sorted {
-            // 同一格子内行距很近；不同课程块之间空隙更大
-            if let last = result.last?.last, item.rect.minY - last.rect.maxY < max(lineHeight * 1.35, 0.014) {
-                result[result.count - 1].append(item)
-            } else {
-                result.append([item])
-            }
-        }
-        return result
-    }
-
-    private static func periods(for block: [TextItem], rowCenters: [Int: CGFloat], nextTop: CGFloat?) -> (Int, Int)? {
-        guard !rowCenters.isEmpty else { return nil }
-        let top = block.map(\.rect.minY).min() ?? 0
-        let bottom = block.map(\.rect.maxY).max() ?? 0
-        let tolerance: CGFloat = 0.014
-        let covered = rowCenters.filter { $0.value >= top - tolerance && $0.value <= bottom + tolerance }.keys.sorted()
-        if let first = covered.first, let last = covered.last {
-            // 块已覆盖两节以上时不要再自动扩成更多
-            if first == last, first % 2 == 1, let nextCenter = rowCenters[first + 1] {
-                let rowHeight = abs(nextCenter - (rowCenters[first] ?? nextCenter))
-                if nextTop.map({ $0 > nextCenter - rowHeight * 0.35 }) ?? true {
-                    return (first, first + 1)
-                }
-            }
-            return (first, last)
-        }
-        let mid = (top + bottom) / 2
-        let nearest = rowCenters.min { abs($0.value - mid) < abs($1.value - mid) }!.key
-        if nearest % 2 == 1, rowCenters[nearest + 1] != nil {
-            return (nearest, nearest + 1)
-        }
-        return (nearest, nearest)
-    }
-
-    private static func guessedPeriodRows(from items: [TextItem], leftBoundary: CGFloat,
-                                          headerBottom: CGFloat, slots: [PeriodSlot]) -> [Int: CGFloat] {
-        let bodyItems = items.filter { $0.rect.minY > headerBottom }
-        guard let top = bodyItems.map(\.rect.minY).min(), let bottom = bodyItems.map(\.rect.maxY).max(), bottom > top else {
-            return [:]
-        }
-        let count = max(slots.count, 14)
-        var result: [Int: CGFloat] = [:]
-        for index in 1...count {
-            let t = (CGFloat(index) - 0.5) / CGFloat(count)
-            result[index] = top + (bottom - top) * t
-        }
-        return result
     }
 
     /// 同一天、同名同教室且节次相连时，只合并「被拆碎的同一大节」。

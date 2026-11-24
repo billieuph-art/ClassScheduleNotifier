@@ -140,8 +140,25 @@ enum ScheduleImporter {
         ]
         let ranked = candidates
             .map { pair -> (String, [CourseDraft], Int) in
-                let clean = dedupe(pair.1.filter { !$0.name.isEmpty && !ScheduleJunk.isNonCourseText($0.name) && $0.isValid })
-                return (pair.0, clean, quality(clean))
+                let clean = dedupe(pair.1.filter {
+                    !$0.name.isEmpty
+                        && !ScheduleJunk.isNonCourseText($0.name)
+                        && !OCRCleanup.isBogusCourseName($0.name)
+                        && $0.isValid
+                })
+                // 网格版式：有教室的课越多越可信，额外加分避免被脏的 lines 抢赢
+                var score = quality(clean)
+                if pair.0 == "grid", clean.count >= 4 {
+                    score += clean.filter { !$0.classroom.isEmpty }.count * 2
+                    score += 8
+                }
+                if pair.0 == "list", clean.count >= 4 {
+                    score += 6
+                }
+                if pair.0 == "timeline", clean.count >= 4 {
+                    score += 6
+                }
+                return (pair.0, clean, score)
             }
             .sorted { $0.2 > $1.2 }
 

@@ -93,8 +93,10 @@ enum TextExtractor {
         request.usesLanguageCorrection = true
         request.recognitionLanguages = [Locale.Language(identifier: "zh-Hans"), Locale.Language(identifier: "en-US")]
         let observations = try await request.perform(on: cgImage)
-        return observations.compactMap { observation in
+        let raw: [TextItem] = observations.compactMap { observation in
             guard let candidate = observation.topCandidates(1).first else { return nil }
+            // 过低置信度易产生串字，丢掉
+            if candidate.confidence < 0.35 { return nil }
             let box = observation.boundingBox.cgRect
             // Vision 的原点在左下角，转换为左上角便于按行排序。
             let rect = CGRect(x: box.minX, y: 1 - box.maxY, width: box.width, height: box.height)
@@ -103,6 +105,7 @@ enum TextExtractor {
                 .applyingTransform(.fullwidthToHalfwidth, reverse: false) ?? candidate.string
             return TextItem(text: text, rect: rect, page: page)
         }
+        return OCRCleanup.dedupeItems(raw)
     }
 
     /// 把 OCR 结果按行排列并附上横坐标，方便大模型理解表格列（星期）与行（节次）。
