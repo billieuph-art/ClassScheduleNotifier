@@ -292,12 +292,12 @@ enum HorizontalGridParser {
     }
 
     private static func isBuildingOnly(_ text: String) -> Bool {
-        text.range(of: #"^[东南西北]?[\\p{Han}A-Za-z0-9]{1,10}(?:楼|馆|教|室|区|院|中心)$"#,
+        text.range(of: #"^[东南西北]?[\p{Han}A-Za-z0-9]{1,10}(?:楼|馆|教|室|区|院|中心)$"#,
                    options: .regularExpression) != nil
     }
 
     private static func isRoomNumber(_ text: String) -> Bool {
-        text.range(of: #"^[A-Za-z]?\\-?\\d{2,5}[A-Za-z]?$"#, options: .regularExpression) != nil
+        text.range(of: #"^[A-Za-z]?\-?\d{2,5}[A-Za-z]?$"#, options: .regularExpression) != nil
     }
 
     private static func isClassroom(_ text: String) -> Bool {
