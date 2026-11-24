@@ -40,7 +40,7 @@ struct ImportView: View {
                 if outcome != nil {
                     ToolbarItem(placement: .confirmationAction) {
                         Button("保存", systemImage: "checkmark", role: .confirm) { requestSave() }
-                            .disabled(!drafts.contains { $0.isIncluded && $0.isValid })
+                            .disabled(!drafts.contains { $0.isIncluded && $0.canCommit })
                     }
                 }
             }
@@ -313,8 +313,9 @@ struct ImportView: View {
     }
 
     private func requestSave() {
-        let risky = drafts.contains { $0.isIncluded && $0.isValid && $0.needsReview }
-        if risky {
+        let included = drafts.filter { $0.isIncluded }
+        let incomplete = included.filter { !$0.canCommit || $0.needsReview }
+        if !incomplete.isEmpty {
             showSaveReviewAlert = true
         } else {
             save()
@@ -322,11 +323,11 @@ struct ImportView: View {
     }
 
     private func save() {
-        // 关闭/取消不会走到这里；仅确认保存才写入
+        // 关闭/取消不会走到这里；仅确认保存才写入。无节次/时间的项即使勾选也不写入。
         let majorName = major.trimmingCharacters(in: .whitespaces)
         if replaceExisting {
             for course in existing { context.delete(course) }
-            for draft in drafts where draft.isIncluded && draft.isValid {
+            for draft in drafts where draft.isIncluded && draft.canCommit {
                 context.insert(draft.makeCourse(major: majorName))
             }
         } else {
@@ -340,7 +341,7 @@ struct ImportView: View {
 
     /// 合并导入：同名同学期同节次则合并周次；否则新增（支持单双周两套课）。
     private func mergeIntoExisting(major: String) {
-        for draft in drafts where draft.isIncluded && draft.isValid {
+        for draft in drafts where draft.isIncluded && draft.canCommit {
             if let match = existing.first(where: {
                 $0.name == draft.name
                     && $0.weekday == draft.weekday
@@ -384,7 +385,7 @@ private struct DraftRow: View {
                     HStack(spacing: 6) {
                         Text(draft.name).font(.headline)
                         if draft.needsReview {
-                            Text(draft.classroom.isEmpty && draft.teacher.isEmpty ? "缺教室/教师" : "待确认")
+                            Text(draft.reviewBadge)
                                 .font(.caption2.weight(.semibold))
                                 .foregroundStyle(.orange)
                         }
@@ -406,10 +407,14 @@ private struct DraftRow: View {
                 Picker("星期", selection: $draft.weekday) {
                     ForEach(1...7, id: \.self) { Text(WeekdayName.full($0)).tag($0) }
                 }
-                Stepper("开始：第\(draft.startPeriod)节", value: $draft.startPeriod, in: 1...16)
-                    .onChange(of: draft.startPeriod) { _, _ in recomputeTimes() }
-                Stepper("结束：第\(draft.endPeriod)节", value: $draft.endPeriod, in: draft.startPeriod...16)
-                    .onChange(of: draft.endPeriod) { _, _ in recomputeTimes() }
+                Stepper("开始：第\(max(draft.startPeriod, 1))节", value: Binding(
+                    get: { max(draft.startPeriod, 1) },
+                    set: { draft.startPeriod = $0; recomputeTimes() }
+                ), in: 1...16)
+                Stepper("结束：第\(max(draft.endPeriod, draft.startPeriod, 1))节", value: Binding(
+                    get: { max(draft.endPeriod, draft.startPeriod, 1) },
+                    set: { draft.endPeriod = $0; recomputeTimes() }
+                ), in: max(draft.startPeriod, 1)...16)
                 TextField("周次（如 13 或 1,3,5，留空为每周）", text: Binding(
                     get: { draft.weeks.isEmpty ? "" : WeeksParser.format(draft.weeks).replacingOccurrences(of: "周", with: "") },
                     set: { draft.weeks = WeeksParser.parse($0) }

@@ -99,7 +99,11 @@ func expect(_ cond: Bool, _ message: String) {
 // collapse
 expect(collapseRepeatedPhrase("高等数学（上）高等数学（上）高等数学（上）") == "高等数学（上）", "collapse 高等数学 x3")
 expect(collapseRepeatedPhrase("教一楼302教一楼302") == "教一楼302", "collapse 教室 x2")
+expect(collapseRepeatedPhrase("教一楼 302教一楼 302") == "教一楼 302", "collapse 带空格教室 x2")
 expect(collapseRepeatedPhrase("大学英语") == "大学英语", "collapse 不伤正常课名")
+expect(collapseRepeatedPhrase("高等数学（上）高等数学（上）高等数学（上）") == "高等数学（上）"
+        && !isBogusCourseName("高等数学（上）"),
+       "重复课名折叠后合法")
 
 // bogus
 for name in [
