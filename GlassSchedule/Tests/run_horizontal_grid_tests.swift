@@ -106,8 +106,8 @@ let verticalDays = [
 expect(!isHorizontal(verticalDays), "顶部星期列布局不得误判为星期行")
 
 // 相邻行边界两侧必须归属不同星期。
-expect(owner(rows[1]!.upperBound - 0.001, rows) == 2, "周二行内边界归周二")
-expect(owner(rows[1]!.upperBound + 0.001, rows) == 3, "跨过行边界后归周三")
+expect(owner(rows[2]!.upperBound - 0.001, rows) == 2, "周二行内边界归周二")
+expect(owner(rows[2]!.upperBound + 0.001, rows) == 3, "跨过行边界后归周三")
 
 if failures == 0 {
     print("\nAll horizontal timetable spatial regressions passed.")
