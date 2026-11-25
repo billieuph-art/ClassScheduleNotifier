@@ -33,6 +33,7 @@ jobs:
           swift GlassSchedule/Tests/run_bug_screenshot_fixtures.swift
           swift GlassSchedule/Tests/run_chaoxing_atroom_tests.swift
           swift GlassSchedule/Tests/run_chaoxing_week13_fixture.swift
+          swift GlassSchedule/Tests/run_sparse_grid_fusion_tests.swift
 
       - name: Generate Xcode project
         run: |
@@ -90,15 +91,17 @@ jobs:
                 codesign --force --sign - --timestamp=none --generate-entitlement-der "$appex"
               done
             fi
-            codesign --force --sign - --timestamp=none --generate-entitlement-der "$APP"
-            codesign -dv --verbose=2 "$APP" || true
-
-            chmod +x "$APP/GlassSchedule" || true
+            # Set executable permissions before signing; never mutate app bundle after sealing.
+            chmod +x "$APP/GlassSchedule"
             if [ -d "$APP/PlugIns" ]; then
-              find "$APP/PlugIns" -type f -name 'GlassScheduleWidgets' -exec chmod +x {} \;
+              find "$APP/PlugIns" -type f -name 'GlassScheduleWidgets' -exec chmod +x {} \\;
             fi
 
-            # 与历史可安装包一致：zip 打包（勿用 ditto -c，部分直接安装器不认）
+            codesign --force --sign - --timestamp=none --generate-entitlement-der "$APP"
+            codesign --verify --deep --strict --verbose=2 "$APP"
+            codesign -dv --verbose=2 "$APP" || true
+
+            # Canonical IPA layout: Payload/GlassSchedule.app at archive root.
             mkdir -p Payload
             ditto "$APP" Payload/GlassSchedule.app
             ICON_SIZE=$(stat -f%z "Payload/GlassSchedule.app/AppIcon60x60@2x.png")
@@ -112,7 +115,11 @@ jobs:
               echo "ERROR: Assets.car out of installable range ($CAR_SIZE)"
               exit 1
             fi
-            zip -r -q "$out_ipa" Payload
+            # Use Apple's ZIP writer without resource-fork sidecars; verify CRC and root layout.
+            /usr/bin/ditto -c -k --norsrc --keepParent Payload "$out_ipa"
+            /usr/bin/unzip -t "$out_ipa"
+            ZIP_ROOTS=$(/usr/bin/unzip -Z1 "$out_ipa" | awk -F/ 'NF {print $1}' | sort -u)
+            [ "$ZIP_ROOTS" = "Payload" ] || { echo "ERROR: invalid IPA root: $ZIP_ROOTS"; exit 1; }
             ls -lh "$out_ipa"
 
             echo "---- $label summary ----"
@@ -146,16 +153,23 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: glass-schedule-sideload-${{ github.run_number }}
-          name: Classio 侧载版 IPA ${{ github.run_number }}（v1.0.22）
+          name: Classio 侧载版 IPA ${{ github.run_number }}（v1.0.24）
           target_commitish: ${{ github.sha }}
           prerelease: true
           files: |
             GlassSchedule/GlassSchedule-sideload.ipa
             GlassSchedule/GlassSchedule-sideload-lite.ipa
           body: |
-            ## Classio 侧载专用包（v1.0.22）
+            ## Classio 侧载专用包（v1.0.24）
 
-            ### 本版（多版式课表识别）
+            ### 本版（SideStore IPA 归档修复 + 超星漏课修复）
+            - 修正 IPA ZIP 归档生成方式，确保根目录只有 Payload，且包含标准 Payload/GlassSchedule.app 路径
+            - 归档前完成所有可执行权限设置，再执行代码签名；增加严格签名校验、ZIP CRC 与根目录校验
+            - 稀疏网格解析不再独占最终结果；当识别课程少于 4 条或覆盖星期少于 3 天时，融合其他解析器的独立课程候选
+            - 候选融合要求同星期、相同节次/时间且课名相似才补充字段，避免仅因教室相同误合并不同课程
+            - 只有至少 4 条课程且覆盖至少 3 个星期，才给予超星网格完整性加权
+
+            ### 前序版式能力
             - 新增「星期在左侧按行排列、节次在顶部按列排列」的横向课表解析，同时保留星期列式和超星竖排识别
             - 按单元格空间位置关联课程名称、教师、教室、周次和节次/时间，减少横纵版式错位
             - 支持教师与课程名同一行、教室楼栋与门牌拆行、纯数字门牌及单字星期表头

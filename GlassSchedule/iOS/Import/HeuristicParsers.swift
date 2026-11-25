@@ -399,14 +399,18 @@ enum GridHeuristicParser {
         let blockDrafts = parseByColumnBlocks(items: items, columns: columns, colBounds: colBounds,
                                               headerBottom: headerBottom, leftBoundary: leftBoundary, slots: slots)
 
-        // 有 @ 时一律走列内课块，绝不用「第 N 节」带把 @231 后的 3 吃掉、也避免单节带漏课
-        if atRoomHits >= 1, !blockDrafts.isEmpty {
-            return blockDrafts
-        }
-
+        // 同时尝试「整块聚类」与「节次行带」两种解析。超星课表经常把相邻
+        // 1-2 / 3-4 节显示为两个紧贴的色块；仅按文字行距聚类可能把它们粘在一起，
+        // 或因 OCR 框缺失而漏掉整列。带 @ 教室号时，行带解析也必须走专用拆分器。
         let detectedBands = detectPeriodBands(in: items, leftBoundary: leftBoundary, headerBottom: headerBottom)
         let bandDrafts = parseByBands(items: items, colBounds: colBounds, bands: detectedBands,
-                                      headerBottom: headerBottom, slots: slots)
+                                      headerBottom: headerBottom, slots: slots,
+                                      allowAtRoom: atRoomHits >= 1)
+
+        if atRoomHits >= 1 {
+            let candidates = [blockDrafts, bandDrafts].filter { !$0.isEmpty }
+            return candidates.max { candidateScore($0) < candidateScore($1) } ?? []
+        }
 
         let bandScore = bandDrafts.filter { $0.canCommit || !$0.classroom.isEmpty }.count
         let blockScore = blockDrafts.filter { $0.canCommit || !$0.classroom.isEmpty }.count
@@ -419,9 +423,17 @@ enum GridHeuristicParser {
                             headerBottom: headerBottom, slots: slots)
     }
 
+    /// 优先保留覆盖星期更多、课程更多且教室/节次信息完整的候选解析。
+    private static func candidateScore(_ drafts: [CourseDraft]) -> Int {
+        let days = Set(drafts.map(\.weekday)).count
+        let rooms = drafts.filter { !$0.classroom.isEmpty }.count
+        let periods = drafts.filter { $0.startPeriod > 0 && $0.endPeriod >= $0.startPeriod }.count
+        return drafts.count * 10 + days * 8 + rooms * 2 + periods * 2
+    }
+
     private static func parseByBands(items: [TextItem], colBounds: [Int: ClosedRange<CGFloat>],
                                      bands: [PeriodBand], headerBottom: CGFloat,
-                                     slots: [PeriodSlot]) -> [CourseDraft] {
+                                     slots: [PeriodSlot], allowAtRoom: Bool = false) -> [CourseDraft] {
         guard !bands.isEmpty else { return [] }
         var drafts: [CourseDraft] = []
         for (day, xRange) in colBounds {
@@ -430,7 +442,8 @@ enum GridHeuristicParser {
                     guard item.rect.minY >= headerBottom - 0.01 else { return false }
                     return xRange.contains(item.rect.midX) && band.yRange.contains(item.rect.midY)
                 }
-                guard let draft = draftFromCell(cellItems, day: day, periods: (band.startPeriod, band.endPeriod), slots: slots) else {
+                guard let draft = draftFromCell(cellItems, day: day, periods: (band.startPeriod, band.endPeriod),
+                                                slots: slots, allowAtRoom: allowAtRoom) else {
                     continue
                 }
                 drafts.append(draft)
