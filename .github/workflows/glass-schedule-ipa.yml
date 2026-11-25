@@ -146,16 +146,21 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: glass-schedule-sideload-${{ github.run_number }}
-          name: Classio 侧载版 IPA ${{ github.run_number }}（v1.0.22）
+          name: Classio 侧载版 IPA ${{ github.run_number }}（v1.0.23）
           target_commitish: ${{ github.sha }}
           prerelease: true
           files: |
             GlassSchedule/GlassSchedule-sideload.ipa
             GlassSchedule/GlassSchedule-sideload-lite.ipa
           body: |
-            ## Classio 侧载专用包（v1.0.22）
+            ## Classio 侧载专用包（v1.0.23）
 
-            ### 本版（多版式课表识别）
+            ### 本版（超星课表漏课修复测试）
+            - 稀疏网格解析不再独占最终结果；当识别课程少于 4 条或覆盖星期少于 3 天时，融合其他解析器的独立课程候选
+            - 候选融合要求同星期、相同节次/时间且课名相似才补充字段，避免仅因教室相同误合并不同课程
+            - 只有至少 4 条课程且覆盖至少 3 个星期，才给予超星网格完整性加权
+
+            ### 前序版式能力
             - 新增「星期在左侧按行排列、节次在顶部按列排列」的横向课表解析，同时保留星期列式和超星竖排识别
             - 按单元格空间位置关联课程名称、教师、教室、周次和节次/时间，减少横纵版式错位
             - 支持教师与课程名同一行、教室楼栋与门牌拆行、纯数字门牌及单字星期表头
