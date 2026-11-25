@@ -154,12 +154,16 @@ enum ScheduleImporter {
                     score += clean.filter { !$0.classroom.isEmpty }.count * 2
                 }
                 if pair.0 == "grid" {
+                    let weekdayCoverage = Set(clean.map(\\.weekday)).count
                     if clean.count >= 2 {
                         score += clean.filter { !$0.classroom.isEmpty }.count * 3
                         score += clean.filter { $0.startPeriod > 0 }.count * 2
                         score += 12
                     }
-                    if atRoomCount >= 2 { score += 40 }
+                    // 两条带 @ 教室的记录不代表整张课表完整；只有覆盖多个星期且
+                    // 课程数量达到最低门槛时，才给网格解析完整性加权。
+                    if atRoomCount >= 4 && weekdayCoverage >= 3 { score += 40 }
+                    else if atRoomCount >= 2 { score += 6 }
                 }
                 if pair.0 == "list", clean.count >= 3 {
                     score += clean.filter { $0.startPeriod > 0 || $0.endMinutes > $0.startMinutes }.count * 2
@@ -176,15 +180,21 @@ enum ScheduleImporter {
         }
 
         var drafts = best.1
-        let bestIsSpatialGrid = best.0 == "horizontal"
-            || (best.0 == "grid" && best.1.filter {
-                !$0.classroom.isEmpty && $0.name.count >= 4
-            }.count >= 2)
-        // 完整网格结果不再与其他版式合并，避免跨列残片污染课名。
-        if !bestIsSpatialGrid,
-           let second = ranked.dropFirst().first,
-           second.0 != "lines", best.0 != "lines",
-           second.2 >= best.2 / 2, !second.1.isEmpty {
+        let primaryWeekdays = Set(best.1.map(\\.weekday)).count
+        let primaryLooksComplete = best.1.count >= 4 && primaryWeekdays >= 3
+        let bestIsSpatialGrid = best.0 == "horizontal" || best.0 == "grid"
+
+        if !primaryLooksComplete {
+            // 稀疏网格结果不能独占导入结果。超星截图中，某个解析器可能只识别
+            // 出周一/周三，而列表/时间轴/另一套网格解析仍能找到周二/周五。
+            // 将有效候选做按星期+节次的融合，保留主候选字段，并补入未匹配课程。
+            for candidate in ranked.dropFirst() where candidate.2 > 0 && !candidate.1.isEmpty {
+                drafts = merge(primary: drafts, secondary: candidate.1, fillWeeks: true)
+            }
+        } else if !bestIsSpatialGrid,
+                  let second = ranked.dropFirst().first,
+                  second.0 != "lines", best.0 != "lines",
+                  second.2 >= best.2 / 2, !second.1.isEmpty {
             drafts = merge(primary: drafts, secondary: second.1, fillWeeks: true)
         }
         return drafts.filter(isAcceptableDraft)
