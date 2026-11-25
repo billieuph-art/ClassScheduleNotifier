@@ -91,15 +91,17 @@ jobs:
                 codesign --force --sign - --timestamp=none --generate-entitlement-der "$appex"
               done
             fi
-            codesign --force --sign - --timestamp=none --generate-entitlement-der "$APP"
-            codesign -dv --verbose=2 "$APP" || true
-
-            chmod +x "$APP/GlassSchedule" || true
+            # Set executable permissions before signing; never mutate app bundle after sealing.
+            chmod +x "$APP/GlassSchedule"
             if [ -d "$APP/PlugIns" ]; then
-              find "$APP/PlugIns" -type f -name 'GlassScheduleWidgets' -exec chmod +x {} \;
+              find "$APP/PlugIns" -type f -name 'GlassScheduleWidgets' -exec chmod +x {} \\;
             fi
 
-            # 与历史可安装包一致：zip 打包（勿用 ditto -c，部分直接安装器不认）
+            codesign --force --sign - --timestamp=none --generate-entitlement-der "$APP"
+            codesign --verify --deep --strict --verbose=2 "$APP"
+            codesign -dv --verbose=2 "$APP" || true
+
+            # Canonical IPA layout: Payload/GlassSchedule.app at archive root.
             mkdir -p Payload
             ditto "$APP" Payload/GlassSchedule.app
             ICON_SIZE=$(stat -f%z "Payload/GlassSchedule.app/AppIcon60x60@2x.png")
@@ -113,7 +115,11 @@ jobs:
               echo "ERROR: Assets.car out of installable range ($CAR_SIZE)"
               exit 1
             fi
-            zip -r -q "$out_ipa" Payload
+            # Use Apple's ZIP writer without resource-fork sidecars; verify CRC and root layout.
+            /usr/bin/ditto -c -k --norsrc --keepParent Payload "$out_ipa"
+            /usr/bin/unzip -t "$out_ipa"
+            ZIP_ROOTS=$(/usr/bin/unzip -Z1 "$out_ipa" | awk -F/ 'NF {print $1}' | sort -u)
+            [ "$ZIP_ROOTS" = "Payload" ] || { echo "ERROR: invalid IPA root: $ZIP_ROOTS"; exit 1; }
             ls -lh "$out_ipa"
 
             echo "---- $label summary ----"
