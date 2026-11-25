@@ -33,6 +33,7 @@ jobs:
           swift GlassSchedule/Tests/run_bug_screenshot_fixtures.swift
           swift GlassSchedule/Tests/run_chaoxing_atroom_tests.swift
           swift GlassSchedule/Tests/run_chaoxing_week13_fixture.swift
+          swift GlassSchedule/Tests/run_sparse_grid_fusion_tests.swift
 
       - name: Generate Xcode project
         run: |
