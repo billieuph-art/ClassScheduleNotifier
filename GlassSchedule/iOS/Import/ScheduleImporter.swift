@@ -154,7 +154,7 @@ enum ScheduleImporter {
                     score += clean.filter { !$0.classroom.isEmpty }.count * 2
                 }
                 if pair.0 == "grid" {
-                    let weekdayCoverage = Set(clean.map(\\.weekday)).count
+                    let weekdayCoverage = Set(clean.map(\.weekday)).count
                     if clean.count >= 2 {
                         score += clean.filter { !$0.classroom.isEmpty }.count * 3
                         score += clean.filter { $0.startPeriod > 0 }.count * 2
@@ -180,7 +180,7 @@ enum ScheduleImporter {
         }
 
         var drafts = best.1
-        let primaryWeekdays = Set(best.1.map(\\.weekday)).count
+        let primaryWeekdays = Set(best.1.map(\.weekday)).count
         let primaryLooksComplete = best.1.count >= 4 && primaryWeekdays >= 3
         let bestIsSpatialGrid = best.0 == "horizontal" || best.0 == "grid"
 
