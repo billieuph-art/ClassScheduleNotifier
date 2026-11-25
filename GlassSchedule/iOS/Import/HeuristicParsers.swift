@@ -425,7 +425,7 @@ enum GridHeuristicParser {
 
     /// 优先保留覆盖星期更多、课程更多且教室/节次信息完整的候选解析。
     private static func candidateScore(_ drafts: [CourseDraft]) -> Int {
-        let days = Set(drafts.map(\\.weekday)).count
+        let days = Set(drafts.map(\.weekday)).count
         let rooms = drafts.filter { !$0.classroom.isEmpty }.count
         let periods = drafts.filter { $0.startPeriod > 0 && $0.endPeriod >= $0.startPeriod }.count
         return drafts.count * 10 + days * 8 + rooms * 2 + periods * 2
