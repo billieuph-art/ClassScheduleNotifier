@@ -153,16 +153,18 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: glass-schedule-sideload-${{ github.run_number }}
-          name: Classio 侧载版 IPA ${{ github.run_number }}（v1.0.23）
+          name: Classio 侧载版 IPA ${{ github.run_number }}（v1.0.24）
           target_commitish: ${{ github.sha }}
           prerelease: true
           files: |
             GlassSchedule/GlassSchedule-sideload.ipa
             GlassSchedule/GlassSchedule-sideload-lite.ipa
           body: |
-            ## Classio 侧载专用包（v1.0.23）
+            ## Classio 侧载专用包（v1.0.24）
 
-            ### 本版（超星课表漏课修复测试）
+            ### 本版（SideStore IPA 归档修复 + 超星漏课修复）
+            - 修正 IPA ZIP 归档生成方式，确保根目录只有 Payload，且包含标准 Payload/GlassSchedule.app 路径
+            - 归档前完成所有可执行权限设置，再执行代码签名；增加严格签名校验、ZIP CRC 与根目录校验
             - 稀疏网格解析不再独占最终结果；当识别课程少于 4 条或覆盖星期少于 3 天时，融合其他解析器的独立课程候选
             - 候选融合要求同星期、相同节次/时间且课名相似才补充字段，避免仅因教室相同误合并不同课程
             - 只有至少 4 条课程且覆盖至少 3 个星期，才给予超星网格完整性加权
