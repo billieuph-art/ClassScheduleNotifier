@@ -189,7 +189,7 @@ enum ScheduleImporter {
             // 出周一/周三，而列表/时间轴/另一套网格解析仍能找到周二/周五。
             // 将有效候选做按星期+节次的融合，保留主候选字段，并补入未匹配课程。
             for candidate in ranked.dropFirst() where candidate.2 > 0 && !candidate.1.isEmpty {
-                drafts = merge(primary: drafts, secondary: candidate.1, fillWeeks: true)
+                drafts = fuseIncompleteCandidates(primary: drafts, secondary: candidate.1)
             }
         } else if !bestIsSpatialGrid,
                   let second = ranked.dropFirst().first,
@@ -231,6 +231,40 @@ enum ScheduleImporter {
             if let mapped = PeriodTable.periods(startMinutes: draft.startMinutes, endMinutes: draft.endMinutes, in: SharedSettings.periodSlots),
                mapped.0 == draft.startPeriod, mapped.1 == draft.endPeriod { s += 3 }
             return score + max(0, s)
+        }
+    }
+
+    /// 稀疏主解析的候选融合：只按同星期、相同节次/时间且课名相似来补字段，
+    /// 不再仅因教室相同就把两门不同课程合并。
+    private static func fuseIncompleteCandidates(primary: [CourseDraft], secondary: [CourseDraft]) -> [CourseDraft] {
+        var result = primary
+        for draft in secondary {
+            let matchIndex = result.firstIndex { existing in
+                guard existing.weekday == draft.weekday else { return false }
+                let samePeriods = existing.startPeriod > 0 && draft.startPeriod > 0
+                    && existing.startPeriod == draft.startPeriod && existing.endPeriod == draft.endPeriod
+                let sameTime = existing.startMinutes > 0 && draft.startMinutes > 0
+                    && abs(existing.startMinutes - draft.startMinutes) <= 10
+                    && abs(existing.endMinutes - draft.endMinutes) <= 10
+                return (samePeriods || sameTime) && namesSimilar(existing.name, draft.name)
+            }
+            if let index = matchIndex {
+                if result[index].name.count < draft.name.count { result[index].name = draft.name }
+                if result[index].classroom.isEmpty { result[index].classroom = draft.classroom }
+                if result[index].teacher.isEmpty { result[index].teacher = draft.teacher }
+                if result[index].weeks.isEmpty { result[index].weeks = draft.weeks }
+                if result[index].startPeriod <= 0 { result[index].startPeriod = draft.startPeriod }
+                if result[index].endPeriod <= 0 { result[index].endPeriod = draft.endPeriod }
+                if result[index].endMinutes <= result[index].startMinutes {
+                    result[index].startMinutes = draft.startMinutes
+                    result[index].endMinutes = draft.endMinutes
+                }
+            } else {
+                result.append(draft)
+            }
+        }
+        return dedupe(result).sorted {
+            ($0.weekday, $0.startPeriod, $0.startMinutes) < ($1.weekday, $1.startPeriod, $1.startMinutes)
         }
     }
 
