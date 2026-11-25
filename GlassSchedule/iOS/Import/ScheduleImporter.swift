@@ -59,7 +59,7 @@ enum ScheduleImporter {
         // 课程数和教室字段完整，不代表整张课表已识别完整。
         // 至少覆盖 3 个不同星期且识别到 4 条课程，才允许跳过 AI 复核；
         // 否则像超星课表只识别出周一、周三两条时，会被错误地当成完整网格。
-        let ruleWeekdayCoverage = Set(ruleDrafts.map(\\.weekday)).count
+        let ruleWeekdayCoverage = Set(ruleDrafts.map(\.weekday)).count
         let strongGrid = ruleDrafts.count >= 4 && ruleWeekdayCoverage >= 3
             && ruleScore >= 12
             && ruleDrafts.filter { !$0.classroom.isEmpty }.count >= max(2, (ruleDrafts.count + 1) / 2)
